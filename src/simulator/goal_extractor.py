@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from .llm_client import LLMClient
-from .schemas import DialogueTurn, NormalizedDialogue, RevealSchedule, UserGoalSeed, UserPersona
+from .schemas import CaseSeed, DialogueTurn, NormalizedDialogue, RevealSchedule, UserGoalSeed, UserPersona
 
 
 QUESTION_HINTS = ("怎么", "如何", "为什么", "无法", "不能", "失败", "报错", "打不开", "登不上", "不会", "查询")
@@ -31,6 +31,20 @@ def _guess_goal(user_texts: List[str], title: str | None) -> str:
     if any(hint in first for hint in QUESTION_HINTS):
         return first
     return f"解决这个问题：{first}"
+
+
+def _guess_case_grounded_goal(user_texts: List[str], case: Optional[CaseSeed], fallback_title: str | None) -> str:
+    if user_texts:
+        first = user_texts[0].strip(" ，。！？")
+        if any(hint in first for hint in QUESTION_HINTS):
+            return first
+    if case and case.phenomenon:
+        first_line = case.phenomenon.splitlines()[0].strip(" ，。！？")
+        if first_line:
+            return first_line
+    if case and case.title:
+        return f"解决或咨询：{case.title}"
+    return _guess_goal(user_texts, fallback_title)
 
 
 def _split_facts(user_texts: List[str]) -> tuple[List[str], List[str]]:
@@ -61,15 +75,19 @@ def _guess_persona(user_texts: List[str], labels: List[str]) -> UserPersona:
     )
 
 
-def extract_goal_seed(dialogue: NormalizedDialogue, llm: Optional[LLMClient] = None) -> UserGoalSeed:
+def extract_goal_seed(
+    dialogue: NormalizedDialogue,
+    llm: Optional[LLMClient] = None,
+    case: Optional[CaseSeed] = None,
+) -> UserGoalSeed:
     if llm is not None:
-        llm_seed = _extract_goal_seed_with_llm(dialogue, llm)
+        llm_seed = _extract_goal_seed_with_llm(dialogue, llm, case=case)
         if llm_seed is not None:
             return llm_seed
-    return extract_goal_seed_heuristic(dialogue)
+    return extract_goal_seed_heuristic(dialogue, case=case)
 
 
-def extract_goal_seed_heuristic(dialogue: NormalizedDialogue) -> UserGoalSeed:
+def extract_goal_seed_heuristic(dialogue: NormalizedDialogue, case: Optional[CaseSeed] = None) -> UserGoalSeed:
     user_turns = _user_turns(dialogue)
     user_texts = [turn.text for turn in user_turns]
     labels = _agent_labels(dialogue)
@@ -88,9 +106,9 @@ def extract_goal_seed_heuristic(dialogue: NormalizedDialogue) -> UserGoalSeed:
 
     return UserGoalSeed(
         dialogue_id=dialogue.dialogue_id,
-        target_case_id=dialogue.resolution.case_id,
-        target_title=dialogue.resolution.title,
-        user_goal=_guess_goal(user_texts, dialogue.resolution.title),
+        target_case_id=(case.case_id if case else dialogue.resolution.case_id),
+        target_title=(case.title if case and case.title else dialogue.resolution.title),
+        user_goal=_guess_case_grounded_goal(user_texts, case, dialogue.resolution.title),
         known_facts=known_facts,
         hidden_facts=hidden_facts,
         reveal_schedule=schedule,
@@ -100,17 +118,22 @@ def extract_goal_seed_heuristic(dialogue: NormalizedDialogue) -> UserGoalSeed:
         metadata={
             "extractor": "heuristic_v1",
             "agent_labels": labels,
+            "case_seed": _case_to_prompt_payload(case) if case else None,
         },
     )
 
 
-def _extract_goal_seed_with_llm(dialogue: NormalizedDialogue, llm: LLMClient) -> Optional[UserGoalSeed]:
-    prompt = _build_goal_extraction_prompt(dialogue)
+def _extract_goal_seed_with_llm(
+    dialogue: NormalizedDialogue,
+    llm: LLMClient,
+    case: Optional[CaseSeed] = None,
+) -> Optional[UserGoalSeed]:
+    prompt = _build_goal_extraction_prompt(dialogue, case=case)
     raw = llm.generate_json(
         [
             {
                 "role": "system",
-                "content": "你是企业客服对话分析专家，擅长从真实对话中抽取用户目标、画像和信息透露节奏。只输出 JSON。",
+                "content": "你是企业客服用户模拟器的数据建模专家，擅长把案例库答案和真实对话转换成用户提问路径。只输出 JSON。",
             },
             {"role": "user", "content": prompt},
         ]
@@ -118,12 +141,24 @@ def _extract_goal_seed_with_llm(dialogue: NormalizedDialogue, llm: LLMClient) ->
     if not raw:
         return None
     try:
-        return _seed_from_llm_json(dialogue, raw)
+        return _seed_from_llm_json(dialogue, raw, case=case)
     except (TypeError, ValueError, KeyError):
         return None
 
 
-def _build_goal_extraction_prompt(dialogue: NormalizedDialogue) -> str:
+def _case_to_prompt_payload(case: Optional[CaseSeed]) -> Optional[Dict[str, Any]]:
+    if case is None:
+        return None
+    return {
+        "case_id": case.case_id,
+        "title": case.title,
+        "phenomenon": case.phenomenon,
+        "solution": case.solution,
+        "raw_text": case.raw_text,
+    }
+
+
+def _build_goal_extraction_prompt(dialogue: NormalizedDialogue, case: Optional[CaseSeed] = None) -> str:
     turns = [
         {
             "role": turn.role,
@@ -134,6 +169,7 @@ def _build_goal_extraction_prompt(dialogue: NormalizedDialogue) -> str:
         for turn in dialogue.turns
     ]
     payload = {
+        "case_seed": _case_to_prompt_payload(case),
         "dialogue_id": dialogue.dialogue_id,
         "turns": turns,
         "resolution": {
@@ -143,15 +179,22 @@ def _build_goal_extraction_prompt(dialogue: NormalizedDialogue) -> str:
         },
     }
     return f"""
-请从下面企业客服对话中抽取一个可用于“用户模拟器”的用户种子。
+请从下面的“案例库答案 seed”和“真实客服对话”中抽取一个可用于用户模拟器的用户种子。
+
+背景：
+- 案例库 case_seed 是标准答案，包含 case_id、问题标题、问题现象和解决方案。
+- 真实客服对话是用户实际遇到该案例时的提问过程。
+- 我们要学习的不是让用户复述答案，而是学习用户如何把这个答案对应的问题一步步问出来。
 
 要求：
-1. user_goal 写成用户真正想解决的问题，不要写客服视角。
-2. known_facts 是用户一开始或很自然会主动说的信息。
-3. hidden_facts 是用户被追问后才逐步透露的信息。
-4. reveal_schedule 必须把信息分成 initial / on_clarification / deep_followup 三层。
-5. persona 只能使用给定枚举值。
-6. 不要编造对话中没有依据的具体事实。
+1. user_goal 必须是用户视角的问题目标，不要写成解决方案，不要写客服视角。
+2. 如果提供了 case_seed，请先把“答案视角”转换成“用户面对的直接问题/现象”。
+3. known_facts 是用户开场或很自然会主动说的信息，优先来自真实用户话语。
+4. hidden_facts 是用户知道但通常被追问后才透露的信息，优先来自后续用户话语。
+5. reveal_schedule 必须把信息分成 initial / on_clarification / deep_followup 三层。
+6. persona 只能使用给定枚举值。
+7. 不要让用户提前说出完整解决方案。
+8. 不要编造对话和案例中都没有依据的具体编号、链接、电话、地址、系统名。
 
 输出 JSON，schema 如下：
 {{
@@ -173,7 +216,7 @@ def _build_goal_extraction_prompt(dialogue: NormalizedDialogue) -> str:
   "noise": ["str"]
 }}
 
-对话：
+输入：
 {json.dumps(payload, ensure_ascii=False)}
 """.strip()
 
@@ -189,7 +232,11 @@ def _enum_value(value: Any, allowed: set[str], default: str) -> str:
     return value if value in allowed else default
 
 
-def _seed_from_llm_json(dialogue: NormalizedDialogue, raw: Dict[str, Any]) -> UserGoalSeed:
+def _seed_from_llm_json(
+    dialogue: NormalizedDialogue,
+    raw: Dict[str, Any],
+    case: Optional[CaseSeed] = None,
+) -> UserGoalSeed:
     reveal_obj = raw.get("reveal_schedule") or {}
     persona_obj = raw.get("persona") or {}
     schedule = RevealSchedule(
@@ -220,8 +267,8 @@ def _seed_from_llm_json(dialogue: NormalizedDialogue, raw: Dict[str, Any]) -> Us
 
     return UserGoalSeed(
         dialogue_id=dialogue.dialogue_id,
-        target_case_id=dialogue.resolution.case_id,
-        target_title=dialogue.resolution.title,
+        target_case_id=(case.case_id if case else dialogue.resolution.case_id),
+        target_title=(case.title if case and case.title else dialogue.resolution.title),
         user_goal=str(raw.get("user_goal", "")).strip(),
         known_facts=known_facts,
         hidden_facts=hidden_facts,
@@ -232,5 +279,6 @@ def _seed_from_llm_json(dialogue: NormalizedDialogue, raw: Dict[str, Any]) -> Us
         metadata={
             "extractor": "llm_v1",
             "agent_labels": _agent_labels(dialogue),
+            "case_seed": _case_to_prompt_payload(case) if case else None,
         },
     )

@@ -17,6 +17,7 @@ No third-party dependency is required for the local MVP.
 ```bash
 python3 -m src.pipelines.build_goal_bank \
   --input data/samples/dialogues.sample.jsonl \
+  --cases data/samples/cases.sample.jsonl \
   --output outputs/goal_bank.sample.jsonl
 
 python3 -m src.pipelines.run_simulation \
@@ -35,6 +36,7 @@ export LLM_API_KEY="your-key"
 
 python3 -m src.pipelines.build_goal_bank \
   --input data/samples/dialogues.sample.jsonl \
+  --cases data/samples/cases.sample.jsonl \
   --output outputs/goal_bank.llm.jsonl \
   --llm-provider openai-compatible \
   --llm-base-url https://your-llm-host \
@@ -52,3 +54,21 @@ The state machine still decides what information the user should reveal. The LLM
 
 - goal/profile extraction from historical dialogues;
 - natural rewriting of each user utterance.
+
+## Case-Grounded Route
+
+The recommended input is:
+
+- `cases.jsonl`: the answer seed, including `case_id`, `title`, `phenomenon`, and `solution`;
+- `dialogues.jsonl`: real historical conversations whose `resolution.case_id` points to the target case.
+
+`build_goal_bank` joins them by `case_id`:
+
+```bash
+python3 -m src.pipelines.build_goal_bank \
+  --input data/processed/dialogues.normalized.jsonl \
+  --cases data/processed/cases.normalized.jsonl \
+  --output outputs/goal_bank.case_grounded.jsonl
+```
+
+This route learns how users ask questions for a known answer seed instead of replaying the answer itself.

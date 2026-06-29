@@ -47,6 +47,22 @@ class NormalizedDialogue:
 
 
 @dataclass
+class CaseSeed:
+    case_id: str
+    title: str = ""
+    phenomenon: str = ""
+    solution: str = ""
+    raw_text: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CaseGroundedDialogue:
+    case: CaseSeed
+    dialogue: NormalizedDialogue
+
+
+@dataclass
 class UserPersona:
     tech_level: str = "medium"
     patience: str = "medium"
@@ -149,4 +165,3 @@ def to_dict(value: Any) -> Any:
     if isinstance(value, Enum):
         return value.value
     return value
-

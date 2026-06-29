@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from src.simulator.data_loader import load_dialogues, write_jsonl
+from src.simulator.data_loader import attach_cases, load_cases, load_dialogues, write_jsonl
 from src.simulator.goal_extractor import extract_goal_seed
 from src.simulator.llm_client import build_llm_client
 from src.simulator.schemas import to_dict
@@ -13,6 +13,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build user goal/profile seeds from normalized dialogues.")
     parser.add_argument("--input", required=True, help="Normalized dialogue JSONL path")
     parser.add_argument("--output", required=True, help="Output goal bank JSONL path")
+    parser.add_argument("--cases", default=None, help="Optional case seed JSONL path")
+    parser.add_argument(
+        "--require-case",
+        action="store_true",
+        help="Only build seeds for dialogues that can be joined with a case seed",
+    )
     parser.add_argument("--llm-provider", default="mock", choices=["mock", "openai-compatible"])
     parser.add_argument("--llm-base-url", default=None)
     parser.add_argument("--llm-api-key", default=None)
@@ -35,7 +41,23 @@ def main() -> None:
         )
 
     dialogues = load_dialogues(Path(args.input))
-    seeds = [to_dict(extract_goal_seed(dialogue, llm=llm)) for dialogue in dialogues]
+    if args.cases:
+        cases_by_id = load_cases(Path(args.cases))
+        grounded = attach_cases(dialogues, cases_by_id)
+        matched_dialogue_ids = {item.dialogue.dialogue_id for item in grounded}
+        seeds = [
+            to_dict(extract_goal_seed(item.dialogue, llm=llm, case=item.case))
+            for item in grounded
+        ]
+        if not args.require_case:
+            seeds.extend(
+                to_dict(extract_goal_seed(dialogue, llm=llm))
+                for dialogue in dialogues
+                if dialogue.dialogue_id not in matched_dialogue_ids
+            )
+        print(f"Matched {len(grounded)}/{len(dialogues)} dialogues with case seeds")
+    else:
+        seeds = [to_dict(extract_goal_seed(dialogue, llm=llm)) for dialogue in dialogues]
     write_jsonl(seeds, Path(args.output))
     print(f"Built {len(seeds)} goal seeds -> {args.output}")
 
