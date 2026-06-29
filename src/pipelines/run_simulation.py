@@ -5,12 +5,13 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any, Dict, List
 
-from enterprise_user_simulator.src.simulator.data_loader import read_jsonl, write_jsonl
-from enterprise_user_simulator.src.simulator.evaluator import evaluate_dialogue
-from enterprise_user_simulator.src.simulator.mock_qa import MockEnterpriseQA
-from enterprise_user_simulator.src.simulator.perturbation import apply_difficulty
-from enterprise_user_simulator.src.simulator.runtime import EnterpriseUserSimulator
-from enterprise_user_simulator.src.simulator.schemas import (
+from src.simulator.data_loader import read_jsonl, write_jsonl
+from src.simulator.evaluator import evaluate_dialogue
+from src.simulator.llm_client import LLMClient, build_llm_client
+from src.simulator.mock_qa import MockEnterpriseQA
+from src.simulator.perturbation import apply_difficulty
+from src.simulator.runtime import EnterpriseUserSimulator
+from src.simulator.schemas import (
     DialogueTurn,
     DifficultyConfig,
     RevealSchedule,
@@ -55,9 +56,9 @@ def difficulty_from_name(name: str) -> DifficultyConfig:
     return DifficultyConfig.medium()
 
 
-def run_one(seed: UserGoalSeed, difficulty: DifficultyConfig, max_turns: int) -> Dict[str, Any]:
+def run_one(seed: UserGoalSeed, difficulty: DifficultyConfig, max_turns: int, llm: LLMClient) -> Dict[str, Any]:
     seed = apply_difficulty(seed, difficulty)
-    user = EnterpriseUserSimulator(seed)
+    user = EnterpriseUserSimulator(seed, llm=llm)
     qa = MockEnterpriseQA(target_case_id=seed.target_case_id, target_title=seed.target_title)
 
     turns: List[Dict[str, Any]] = []
@@ -116,6 +117,13 @@ def main() -> None:
     parser.add_argument("--difficulty", default="medium", choices=["easy", "medium", "hard"])
     parser.add_argument("--max-turns", type=int, default=8)
     parser.add_argument("--limit", type=int, default=0, help="Optional max number of seeds")
+    parser.add_argument("--llm-provider", default="mock", choices=["mock", "openai-compatible"])
+    parser.add_argument("--llm-base-url", default=None)
+    parser.add_argument("--llm-api-key", default=None)
+    parser.add_argument("--llm-api-key-env", default="LLM_API_KEY")
+    parser.add_argument("--llm-model", default=None)
+    parser.add_argument("--llm-timeout", type=int, default=60)
+    parser.add_argument("--llm-temperature", type=float, default=0.4)
     args = parser.parse_args()
 
     difficulty = difficulty_from_name(args.difficulty)
@@ -123,7 +131,17 @@ def main() -> None:
     if args.limit:
         seeds = seeds[: args.limit]
 
-    results = [run_one(seed, difficulty, args.max_turns) for seed in seeds]
+    llm = build_llm_client(
+        provider=args.llm_provider,
+        base_url=args.llm_base_url,
+        api_key=args.llm_api_key,
+        api_key_env=args.llm_api_key_env,
+        model=args.llm_model,
+        timeout=args.llm_timeout,
+        temperature=args.llm_temperature,
+    )
+
+    results = [run_one(seed, difficulty, args.max_turns, llm=llm) for seed in seeds]
     write_jsonl(results, Path(args.output))
     success_count = sum(1 for result in results if result["metrics"]["success"])
     print(f"Ran {len(results)} simulations -> {args.output}")
@@ -132,4 +150,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

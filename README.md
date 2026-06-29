@@ -15,12 +15,40 @@ No third-party dependency is required for the local MVP.
 ## Quick Start
 
 ```bash
-python3 -m enterprise_user_simulator.src.pipelines.build_goal_bank \
-  --input enterprise_user_simulator/data/samples/dialogues.sample.jsonl \
-  --output enterprise_user_simulator/outputs/goal_bank.sample.jsonl
+python3 -m src.pipelines.build_goal_bank \
+  --input data/samples/dialogues.sample.jsonl \
+  --output outputs/goal_bank.sample.jsonl
 
-python3 -m enterprise_user_simulator.src.pipelines.run_simulation \
-  --goal-bank enterprise_user_simulator/outputs/goal_bank.sample.jsonl \
-  --output enterprise_user_simulator/outputs/simulation.sample.jsonl
+python3 -m src.pipelines.run_simulation \
+  --goal-bank outputs/goal_bank.sample.jsonl \
+  --output outputs/simulation.sample.jsonl
 ```
 
+## Enable LLM Extraction and Rewriting
+
+By default the project uses deterministic mock/rule logic, so no API key is required.
+
+For an OpenAI-compatible internal model service, set an API key and pass the endpoint:
+
+```bash
+export LLM_API_KEY="your-key"
+
+python3 -m src.pipelines.build_goal_bank \
+  --input data/samples/dialogues.sample.jsonl \
+  --output outputs/goal_bank.llm.jsonl \
+  --llm-provider openai-compatible \
+  --llm-base-url https://your-llm-host \
+  --llm-model your-model-name
+
+python3 -m src.pipelines.run_simulation \
+  --goal-bank outputs/goal_bank.llm.jsonl \
+  --output outputs/simulation.llm.jsonl \
+  --llm-provider openai-compatible \
+  --llm-base-url https://your-llm-host \
+  --llm-model your-model-name
+```
+
+The state machine still decides what information the user should reveal. The LLM only improves:
+
+- goal/profile extraction from historical dialogues;
+- natural rewriting of each user utterance.

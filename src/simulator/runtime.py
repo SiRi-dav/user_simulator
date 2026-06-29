@@ -111,11 +111,48 @@ class EnterpriseUserSimulator:
     def _verbalize(self, facts: List[str], agent_response: Optional[str]) -> str:
         if not facts:
             return "我不太确定。"
-        raw = "，".join(facts)
+        raw = self._rewrite_with_llm(facts, agent_response) or "，".join(facts)
         raw = self._apply_style(raw)
         if agent_response and self.seed.persona.emotion in ("anxious", "impatient"):
             raw = f"{raw}，这个比较急"
         return raw
+
+    def _rewrite_with_llm(self, facts: List[str], agent_response: Optional[str]) -> str:
+        if isinstance(self.llm, MockLLMClient):
+            return ""
+        prompt = f"""
+你要扮演一个企业内部知识问答场景下的真实员工用户。
+
+用户目标：{self.seed.user_goal}
+用户画像：
+- 技术水平：{self.seed.persona.tech_level}
+- 耐心：{self.seed.persona.patience}
+- 配合度：{self.seed.persona.cooperation}
+- 表达风格：{self.seed.persona.style}
+- 情绪：{self.seed.persona.emotion}
+
+当前客服/AI刚说：{agent_response or "这是用户开场，还没有客服回复"}
+本轮必须表达的信息：{facts}
+已经透露过的信息：{self.state.revealed_facts}
+
+请把“本轮必须表达的信息”改写成一句自然的用户话语。
+约束：
+1. 只能输出用户会说的话，不要解释。
+2. 不要替客服回答。
+3. 不要额外编造具体编号、链接、姓名、电话、地址。
+4. 可以有口语化、不完整表达，但不能丢失本轮必须表达的信息。
+5. 长度控制在 80 个中文字以内。
+""".strip()
+        try:
+            text = self.llm.generate_text(
+                [
+                    {"role": "system", "content": "你是企业客服场景的用户话语改写器，只输出用户话语。"},
+                    {"role": "user", "content": prompt},
+                ]
+            )
+        except Exception:
+            return ""
+        return text.strip().strip('"“”')
 
     def _apply_style(self, text: str) -> str:
         if self.seed.persona.tech_level == "low":
@@ -133,4 +170,3 @@ class EnterpriseUserSimulator:
             end_reason=self.state.end_reason,
             state=self.state,
         )
-
