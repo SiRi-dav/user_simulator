@@ -170,6 +170,11 @@ The MVP uses a deterministic mock QA opponent by default. It is meant to validat
 
 Simulator output masks URLs, emails, phone numbers, and long numeric IDs by default. Use `--no-mask` only for internal debugging on approved machines.
 
+The simulator writes both machine-readable JSONL and a human-readable Markdown file. For example:
+
+- `outputs/simulated_dialogues.hard.jsonl`
+- `outputs/simulated_dialogues.hard.readable.md`
+
 To emit only the user plan/opening without mock QA:
 
 ```bash

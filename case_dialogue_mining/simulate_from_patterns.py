@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--max-turns", type=int, default=6, help="Maximum user turns")
     parser.add_argument("--agent", default="mock", choices=["mock", "none"], help="Use mock QA opponent or only emit user plan")
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
+    parser.add_argument("--readable-output", default="", help="Optional readable Markdown output path")
     args = parser.parse_args()
 
     patterns = [record for record in read_jsonl(Path(args.patterns)) if not record.get("parse_error")]
@@ -41,9 +42,14 @@ def main() -> None:
     ]
     if not args.no_mask:
         results = [mask_value(result) for result in results]
-    write_jsonl(results, Path(args.output))
+    output_path = Path(args.output)
+    readable_path = Path(args.readable_output) if args.readable_output else default_readable_path(output_path)
+    write_jsonl(results, output_path)
+    readable_path.parent.mkdir(parents=True, exist_ok=True)
+    readable_path.write_text(build_readable_report(results), encoding="utf-8")
     print(f"Simulated cases: {len(results)}")
-    print(f"Output written to: {args.output}")
+    print(f"Output written to: {output_path}")
+    print(f"Readable output written to: {readable_path}")
 
 
 def simulate_case(pattern: Dict[str, Any], mode: str, max_turns: int, agent: str) -> Dict[str, Any]:
@@ -297,6 +303,48 @@ def mask_text(text: str) -> str:
     text = PHONE_RE.sub("[NUMBER]", text)
     text = LONG_ID_RE.sub("[NUMBER]", text)
     return text
+
+
+def default_readable_path(output_path: Path) -> Path:
+    if output_path.suffix == ".jsonl":
+        return output_path.with_suffix(".readable.md")
+    return output_path.with_name(output_path.name + ".readable.md")
+
+
+def build_readable_report(results: List[Dict[str, Any]]) -> str:
+    lines = ["# Simulated Dialogues", ""]
+    for index, result in enumerate(results, start=1):
+        case_id = result.get("case_id") or "UNKNOWN"
+        mode = result.get("mode") or "unknown"
+        lines.append(f"## {index}. {case_id} ({mode})")
+        summary = result.get("case_to_question_summary")
+        if summary:
+            lines.append(f"- case to question: {summary}")
+        focus = result.get("evaluation_focus") or []
+        if focus:
+            lines.append(f"- evaluation focus: {'；'.join(str(item) for item in focus[:3])}")
+        lines.append("")
+        lines.append("### Dialogue")
+        for turn in result.get("turns") or []:
+            role = "用户" if turn.get("role") == "user" else "客服"
+            turn_id = turn.get("turn_id", "")
+            action = turn.get("action", "")
+            text = str(turn.get("text") or "")
+            lines.append(f"**{role} {turn_id}** [{action}]: {text}")
+            if turn.get("recommended_case_id"):
+                lines.append(f"> recommended_case_id: {turn.get('recommended_case_id')}")
+            revealed = turn.get("revealed_slots") or []
+            if revealed and turn.get("role") == "user":
+                lines.append(f"> revealed: {'；'.join(str(item) for item in revealed[-3:])}")
+            lines.append("")
+        final_state = result.get("final_state") or {}
+        remaining = final_state.get("remaining_slots") or []
+        if remaining:
+            lines.append("### Remaining Slots")
+            for slot in remaining[:8]:
+                lines.append(f"- {slot}")
+            lines.append("")
+    return "\n".join(lines)
 
 
 def looks_like_clarification(text: str) -> bool:
