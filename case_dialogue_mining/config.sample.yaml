@@ -1,25 +1,24 @@
 paths:
-  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
-  dialogues: "../../RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json"
-  output_dir: "outputs"
+  cases: "data/sample_cases.jsonl"
+  dialogues: "data/sample_dialogues.jsonl"
+  output_dir: "outputs_sample"
 
 case_fields:
-  case_id: "__key__"
-  title: "case_name"
-  phenomenon: "text"
-  solution: "text"
+  case_id: "case_id"
+  title: "title"
+  phenomenon: "phenomenon"
+  solution: "solution"
 
 dialogue_fields:
-  dialogue_id: "__key__"
-  case_id: "caseId"
-  turns: "text"
+  dialogue_id: "dialogue_id"
+  case_id: "case_id"
+  turns: "turns"
   role: "role"
   text: "text"
   metadata_case_id_paths:
     - "resolution.case_id"
     - "metadata.case_id"
     - "final_case_id"
-    - "caseId"
 
 analysis:
   max_dialogues_per_case: 5
@@ -34,3 +33,4 @@ local_ai:
   temperature: 0.2
   max_tokens: 2048
   timeout: 60
+

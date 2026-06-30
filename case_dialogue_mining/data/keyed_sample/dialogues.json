@@ -1,0 +1,28 @@
+{
+  "220604136": {
+    "text": [
+      "客服: Hello I'm glad to be at your service.",
+      "用户: I need to re-configure my email.",
+      "客服: How may I help you?",
+      "用户: I have done this process but when I test it then it fails.",
+      "客服: Could you send screenshot for the issue?",
+      "用户: ok I contact u on welink"
+    ],
+    "image": [],
+    "caseId": [
+      "KT00000787"
+    ]
+  },
+  "220604140": {
+    "text": [
+      "用户: 如何查看扣减分销业绩",
+      "客服: 可以在页面中查看",
+      "用户: 好的谢谢"
+    ],
+    "image": [],
+    "caseId": [
+      "KT00412543"
+    ]
+  }
+}
+

@@ -8,7 +8,7 @@ The first-stage goal is data mining and analysis, not user simulation runtime.
 
 ```bash
 cd case_dialogue_mining
-python3 main.py --config config.yaml
+python3 main.py --config config.sample.yaml
 ```
 
 Outputs:
@@ -41,6 +41,39 @@ Dialogues should contain real user-service conversations and a target `case_id`:
 
 Field names are configured in `config.yaml`.
 
+## Run With CUHKSZTEAM Data
+
+For the current server layout:
+
+```text
+/mnt/nas1/users/CuhkszTeam/
+  RUNTIME/raw_data/格式化案例库/uniknow-full-text.json
+  RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json
+  xirui/case_dialogue_mining/
+```
+
+run:
+
+```bash
+cd /mnt/nas1/users/CuhkszTeam/xirui/case_dialogue_mining
+python main.py --config config.yaml
+```
+
+`config.yaml` is set for the real keyed JSON format:
+
+- case id is the outer JSON key, for example `KT00412544`;
+- case title is `case_name`;
+- case text is `text`;
+- dialogue id is the outer JSON key;
+- dialogue target case is `caseId`;
+- dialogue turns are role-prefixed strings in `text`, for example `用户: ...` and `客服: ...`.
+
+For local keyed sample validation:
+
+```bash
+python3 main.py --config config.keyed_sample.yaml
+```
+
 ## Local AI
 
 Default mode is `mock`, which makes the whole pipeline runnable without a model.
@@ -54,4 +87,3 @@ local_ai:
   model: "your-local-model"
   api_key_env: "LOCAL_AI_API_KEY"
 ```
-
