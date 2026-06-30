@@ -17,6 +17,7 @@ Outputs:
 - `outputs/question_patterns.jsonl`
 - `outputs/analysis_errors.jsonl`
 - `outputs/summary_report.md`
+- `outputs/question_patterns.readable.md`
 
 ## Input Contract
 
@@ -93,6 +94,23 @@ analysis:
 ```
 
 Set `max_cases: 0` to analyze all matched cases.
+
+If you only want to rebuild pair matching outputs without calling the model, run:
+
+```bash
+python main.py --config config.yaml --skip-analysis
+```
+
+To create a readable and lightly masked review file from existing AI output:
+
+```bash
+python review_export.py --input outputs/question_patterns.jsonl --limit 30
+```
+
+This writes:
+
+- `outputs/question_patterns.review.md`
+- `outputs/question_patterns.review.masked.jsonl`
 
 For local keyed sample validation:
 

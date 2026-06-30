@@ -14,6 +14,7 @@ from utils import parse_simple_yaml
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mine case-dialogue pairs and analyze user question patterns.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML")
+    parser.add_argument("--skip-analysis", action="store_true", help="Only mine pairs and write reports, without calling AI")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -31,15 +32,18 @@ def main() -> None:
     analysis_config = config.get("analysis", {})
     analysis_pairs = select_pairs_for_analysis(pairs, int(analysis_config.get("max_cases", 0)))
 
-    client = build_local_ai_client(config.get("local_ai", {"provider": "mock"}))
-    patterns, errors = analyze_pairs(analysis_pairs, client, analysis_config)
+    if args.skip_analysis:
+        patterns, errors = [], []
+    else:
+        client = build_local_ai_client(config.get("local_ai", {"provider": "mock"}))
+        patterns, errors = analyze_pairs(analysis_pairs, client, analysis_config)
     write_outputs(pairs, patterns, errors, stats, output_dir)
 
     print(f"Loaded cases: {len(cases)}")
     print(f"Loaded dialogues: {len(dialogues)}")
     print(f"Matched cases: {stats.matched_cases}")
     print(f"Matched dialogues: {stats.matched_dialogues}")
-    print(f"Analyzed cases: {len(analysis_pairs)}")
+    print(f"Analyzed cases: {0 if args.skip_analysis else len(analysis_pairs)}")
     print(f"Outputs written to: {output_dir}")
 
 

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,6 +17,10 @@ def write_outputs(
     write_pair_summary(pairs, output_dir / "case_dialogue_pairs.jsonl")
     write_jsonl([to_dict(pattern) for pattern in patterns], output_dir / "question_patterns.jsonl")
     write_jsonl(errors, output_dir / "analysis_errors.jsonl")
+    (output_dir / "question_patterns.readable.md").write_text(
+        build_readable_patterns_report(patterns),
+        encoding="utf-8",
+    )
     (output_dir / "summary_report.md").write_text(
         build_summary_report(pairs, patterns, stats),
         encoding="utf-8",
@@ -67,9 +70,57 @@ def build_summary_report(
         if pattern.parse_error:
             lines.append(f"- {pattern.case_id}: analysis failed ({pattern.parse_error})")
             continue
-        initial = "；".join(pattern.initial_question_patterns[:3]) or "N/A"
-        missing = "；".join(pattern.common_missing_slots[:3]) or "N/A"
-        lines.append(f"- {pattern.case_id}: initial={initial}; missing_slots={missing}")
+        initial = compact_list(pattern.initial_question_patterns, 2)
+        missing = compact_list(pattern.common_missing_slots, 2)
+        style = pattern.user_style_summary or "N/A"
+        lines.append(f"### {pattern.case_id}")
+        lines.append(f"- initial patterns: {initial}")
+        lines.append(f"- missing slots: {missing}")
+        lines.append(f"- user style: {style}")
+        lines.append("")
     lines.append("")
     return "\n".join(lines)
 
+
+def build_readable_patterns_report(patterns: List[CaseQuestionPattern]) -> str:
+    lines = [
+        "# Question Pattern Review",
+        "",
+        "This file is generated from question_patterns.jsonl for human review.",
+        "",
+    ]
+    for index, pattern in enumerate(patterns, start=1):
+        lines.append(f"## {index}. {pattern.case_id}")
+        if pattern.parse_error:
+            lines.append(f"- parse error: {pattern.parse_error}")
+            lines.append("")
+            continue
+
+        add_section(lines, "Surface Problem Patterns", pattern.surface_problem_patterns)
+        add_section(lines, "Initial Question Patterns", pattern.initial_question_patterns)
+        add_section(lines, "Known Facts", pattern.known_facts)
+        add_section(lines, "Hidden Facts", pattern.hidden_facts)
+        add_section(lines, "Reveal Patterns", pattern.reveal_patterns)
+        add_section(lines, "Common Missing Slots", pattern.common_missing_slots)
+        add_section(lines, "Difficulty Observations", pattern.difficulty_observations)
+        add_section(lines, "Simulation Suggestions", pattern.simulation_suggestions)
+        if pattern.user_style_summary:
+            lines.append("### User Style Summary")
+            lines.append(pattern.user_style_summary)
+            lines.append("")
+    return "\n".join(lines)
+
+
+def add_section(lines: List[str], title: str, values: List[str]) -> None:
+    if not values:
+        return
+    lines.append(f"### {title}")
+    for value in values:
+        lines.append(f"- {value}")
+    lines.append("")
+
+
+def compact_list(values: List[str], limit: int) -> str:
+    if not values:
+        return "N/A"
+    return "；".join(values[:limit])
