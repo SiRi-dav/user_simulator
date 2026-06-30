@@ -74,6 +74,8 @@ def build_summary_report(
         missing = compact_list(pattern.common_missing_slots, 2)
         style = pattern.user_style_summary or "N/A"
         lines.append(f"### {pattern.case_id}")
+        if pattern.case_to_question_summary:
+            lines.append(f"- case to question: {pattern.case_to_question_summary}")
         lines.append(f"- initial patterns: {initial}")
         lines.append(f"- missing slots: {missing}")
         lines.append(f"- user style: {style}")
@@ -101,9 +103,20 @@ def build_readable_patterns_report(patterns: List[CaseQuestionPattern]) -> str:
         add_section(lines, "Known Facts", pattern.known_facts)
         add_section(lines, "Hidden Facts", pattern.hidden_facts)
         add_section(lines, "Reveal Patterns", pattern.reveal_patterns)
+        add_section(lines, "Observed From Dialogue", pattern.observed_from_dialogue)
+        add_section(lines, "Inferred From Case", pattern.inferred_from_case)
+        add_section(lines, "Uncertain Points", pattern.uncertain_points)
         add_section(lines, "Common Missing Slots", pattern.common_missing_slots)
+        add_section(lines, "Opening Question Templates", pattern.opening_question_templates)
+        add_dict_section(lines, "Slot Reveal Plan", pattern.slot_reveal_plan)
+        add_dict_section(lines, "Simulator Actions", pattern.simulator_actions)
         add_section(lines, "Difficulty Observations", pattern.difficulty_observations)
         add_section(lines, "Simulation Suggestions", pattern.simulation_suggestions)
+        add_section(lines, "Evaluation Focus", pattern.evaluation_focus)
+        if pattern.case_to_question_summary:
+            lines.append("### Case To Question Summary")
+            lines.append(pattern.case_to_question_summary)
+            lines.append("")
         if pattern.user_style_summary:
             lines.append("### User Style Summary")
             lines.append(pattern.user_style_summary)
@@ -117,6 +130,16 @@ def add_section(lines: List[str], title: str, values: List[str]) -> None:
     lines.append(f"### {title}")
     for value in values:
         lines.append(f"- {value}")
+    lines.append("")
+
+
+def add_dict_section(lines: List[str], title: str, values: List[Dict]) -> None:
+    if not values:
+        return
+    lines.append(f"### {title}")
+    for value in values:
+        parts = [f"{key}: {item}" for key, item in value.items() if item not in (None, "")]
+        lines.append(f"- {'; '.join(parts)}")
     lines.append("")
 
 

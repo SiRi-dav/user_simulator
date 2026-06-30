@@ -56,6 +56,14 @@ class CaseQuestionPattern:
     common_missing_slots: List[str] = field(default_factory=list)
     difficulty_observations: List[str] = field(default_factory=list)
     simulation_suggestions: List[str] = field(default_factory=list)
+    observed_from_dialogue: List[str] = field(default_factory=list)
+    inferred_from_case: List[str] = field(default_factory=list)
+    uncertain_points: List[str] = field(default_factory=list)
+    case_to_question_summary: str = ""
+    opening_question_templates: List[str] = field(default_factory=list)
+    slot_reveal_plan: List[Dict[str, Any]] = field(default_factory=list)
+    simulator_actions: List[Dict[str, Any]] = field(default_factory=list)
+    evaluation_focus: List[str] = field(default_factory=list)
     raw_ai_response: str = ""
     parse_error: Optional[str] = None
 
@@ -68,4 +76,3 @@ def to_dict(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: to_dict(val) for key, val in value.items()}
     return value
-

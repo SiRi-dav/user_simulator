@@ -89,9 +89,21 @@ def build_markdown(records: List[Dict[str, Any]]) -> str:
         append_list(lines, "Known Facts", record.get("known_facts", []))
         append_list(lines, "Hidden Facts", record.get("hidden_facts", []))
         append_list(lines, "Reveal Patterns", record.get("reveal_patterns", []))
+        append_list(lines, "Observed From Dialogue", record.get("observed_from_dialogue", []))
+        append_list(lines, "Inferred From Case", record.get("inferred_from_case", []))
+        append_list(lines, "Uncertain Points", record.get("uncertain_points", []))
         append_list(lines, "Common Missing Slots", record.get("common_missing_slots", []))
+        append_list(lines, "Opening Question Templates", record.get("opening_question_templates", []))
+        append_dict_list(lines, "Slot Reveal Plan", record.get("slot_reveal_plan", []))
+        append_dict_list(lines, "Simulator Actions", record.get("simulator_actions", []))
         append_list(lines, "Difficulty Observations", record.get("difficulty_observations", []))
         append_list(lines, "Simulation Suggestions", record.get("simulation_suggestions", []))
+        append_list(lines, "Evaluation Focus", record.get("evaluation_focus", []))
+        summary = record.get("case_to_question_summary")
+        if summary:
+            lines.append("### Case To Question Summary")
+            lines.append(str(summary))
+            lines.append("")
         style = record.get("user_style_summary")
         if style:
             lines.append("### User Style Summary")
@@ -106,6 +118,18 @@ def append_list(lines: List[str], title: str, values: List[str]) -> None:
     lines.append(f"### {title}")
     for value in values:
         lines.append(f"- {value}")
+    lines.append("")
+
+
+def append_dict_list(lines: List[str], title: str, values: List[Dict[str, Any]]) -> None:
+    if not values:
+        return
+    lines.append(f"### {title}")
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        parts = [f"{key}: {item}" for key, item in value.items() if item not in (None, "")]
+        lines.append(f"- {'; '.join(parts)}")
     lines.append("")
 
 

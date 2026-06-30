@@ -34,6 +34,29 @@ class MockLocalAIClient(LocalAIClient):
             "common_missing_slots": ["具体系统/页面", "错误码或编号", "操作环境", "期望结果"],
             "difficulty_observations": ["初始问题信息密度较低，需要客服有效追问。"],
             "simulation_suggestions": ["先生成简短开场，再根据客服追问逐步透露隐藏事实。"],
+            "observed_from_dialogue": first_questions[:2],
+            "inferred_from_case": [str(case.get("title") or "").strip()],
+            "uncertain_points": ["样例 mock 不判断真实不确定性。"],
+            "case_to_question_summary": "从案例标题和历史用户开场中提炼表面问题，再按追问逐步补充槽位。",
+            "opening_question_templates": first_questions[:3],
+            "slot_reveal_plan": [
+                {
+                    "slot": "错误码或环境",
+                    "when_to_reveal": "客服追问具体报错或使用环境后",
+                    "example_user_phrase": "我这边提示了一个错误，截图里有。",
+                    "source": "dialogue",
+                }
+            ],
+            "simulator_actions": [
+                {
+                    "turn_stage": "opening",
+                    "user_intent": "报告表面问题",
+                    "behavior": "只说现象，不主动给完整排障信息",
+                    "example": first_questions[0] if first_questions else "这个功能用不了，帮我看下。",
+                    "depends_on_agent": "无",
+                }
+            ],
+            "evaluation_focus": ["客服是否能追问缺失槽位", "客服是否能把用户现象映射到正确 case"],
         }
         return json.dumps(result, ensure_ascii=False)
 

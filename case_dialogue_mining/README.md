@@ -19,6 +19,15 @@ Outputs:
 - `outputs/summary_report.md`
 - `outputs/question_patterns.readable.md`
 
+The upgraded analysis separates:
+
+- `observed_from_dialogue`: behavior or facts supported by real conversations
+- `inferred_from_case`: likely user-side facts inferred from the case answer
+- `uncertain_points`: assumptions that need more data
+- `slot_reveal_plan`: when hidden slots should be revealed in a later simulator
+- `simulator_actions`: reusable user behavior actions by turn stage
+- `evaluation_focus`: what the客服 AI should be tested on for this case
+
 ## Input Contract
 
 Cases should contain answer-side information:
@@ -79,7 +88,7 @@ local_ai:
   model: "qwen3-32b"
   api_key_env: "LOCAL_AI_API_KEY"
   temperature: 0.3
-  max_tokens: 2048
+  max_tokens: 4096
   top_p: 0.5
   presence_penalty: 1.5
   top_k: 1

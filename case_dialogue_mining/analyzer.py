@@ -55,6 +55,14 @@ def parse_pattern(case_id: str, raw_response: str) -> CaseQuestionPattern:
             common_missing_slots=_as_str_list(obj.get("common_missing_slots")),
             difficulty_observations=_as_str_list(obj.get("difficulty_observations")),
             simulation_suggestions=_as_str_list(obj.get("simulation_suggestions")),
+            observed_from_dialogue=_as_str_list(obj.get("observed_from_dialogue")),
+            inferred_from_case=_as_str_list(obj.get("inferred_from_case")),
+            uncertain_points=_as_str_list(obj.get("uncertain_points")),
+            case_to_question_summary=str(obj.get("case_to_question_summary") or ""),
+            opening_question_templates=_as_str_list(obj.get("opening_question_templates")),
+            slot_reveal_plan=_as_dict_list(obj.get("slot_reveal_plan")),
+            simulator_actions=_as_dict_list(obj.get("simulator_actions")),
+            evaluation_focus=_as_str_list(obj.get("evaluation_focus")),
             raw_ai_response=raw_response,
         )
     except Exception as exc:
@@ -77,3 +85,12 @@ def _as_str_list(value: Any) -> List[str]:
         return []
     return [str(item).strip() for item in value if str(item).strip()]
 
+
+def _as_dict_list(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: List[Dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            items.append({str(key): val for key, val in item.items()})
+    return items
