@@ -15,6 +15,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Mine case-dialogue pairs and analyze user question patterns.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML")
     parser.add_argument("--skip-analysis", action="store_true", help="Only mine pairs and write reports, without calling AI")
+    parser.add_argument("--resume-analysis", action="store_true", help="Resume from outputs/question_patterns.partial.jsonl")
+    parser.add_argument("--max-cases", type=int, default=None, help="Override analysis.max_cases from config")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -30,13 +32,21 @@ def main() -> None:
     dialogues = load_dialogues(dialogues_path, config.get("dialogue_fields", {}))
     pairs, stats = match_cases_and_dialogues(cases, dialogues)
     analysis_config = config.get("analysis", {})
-    analysis_pairs = select_pairs_for_analysis(pairs, int(analysis_config.get("max_cases", 0)))
+    max_cases = args.max_cases if args.max_cases is not None else int(analysis_config.get("max_cases", 0))
+    analysis_pairs = select_pairs_for_analysis(pairs, max_cases)
 
     if args.skip_analysis:
         patterns, errors = [], []
     else:
         client = build_local_ai_client(config.get("local_ai", {"provider": "mock"}))
-        patterns, errors = analyze_pairs(analysis_pairs, client, analysis_config)
+        patterns, errors = analyze_pairs(
+            analysis_pairs,
+            client,
+            analysis_config,
+            checkpoint_path=output_dir / "question_patterns.partial.jsonl",
+            error_checkpoint_path=output_dir / "analysis_errors.partial.jsonl",
+            resume=args.resume_analysis,
+        )
     write_outputs(pairs, patterns, errors, stats, output_dir)
 
     print(f"Loaded cases: {len(cases)}")

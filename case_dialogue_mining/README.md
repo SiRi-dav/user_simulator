@@ -104,6 +104,33 @@ analysis:
 
 Set `max_cases: 0` to analyze all matched cases.
 
+For a quick smoke test, override the case count without editing `config.yaml`:
+
+```bash
+python main.py --config config.yaml --max-cases 5
+```
+
+During AI analysis the script writes checkpoints after every case:
+
+- `outputs/question_patterns.partial.jsonl`
+- `outputs/analysis_errors.partial.jsonl`
+
+If a long run is interrupted, resume it with:
+
+```bash
+python main.py --config config.yaml --resume-analysis
+```
+
+You can inspect partial results before the full run finishes:
+
+```bash
+python review_export.py \
+  --input outputs/question_patterns.partial.jsonl \
+  --output outputs/question_patterns.partial.review.md \
+  --jsonl-output outputs/question_patterns.partial.review.masked.jsonl \
+  --limit 20
+```
+
 If you only want to rebuild pair matching outputs without calling the model, run:
 
 ```bash
