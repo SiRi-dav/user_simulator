@@ -28,15 +28,18 @@ def main() -> None:
     cases = load_cases(cases_path, config.get("case_fields", {}))
     dialogues = load_dialogues(dialogues_path, config.get("dialogue_fields", {}))
     pairs, stats = match_cases_and_dialogues(cases, dialogues)
+    analysis_config = config.get("analysis", {})
+    analysis_pairs = select_pairs_for_analysis(pairs, int(analysis_config.get("max_cases", 0)))
 
     client = build_local_ai_client(config.get("local_ai", {"provider": "mock"}))
-    patterns, errors = analyze_pairs(pairs, client, config.get("analysis", {}))
+    patterns, errors = analyze_pairs(analysis_pairs, client, analysis_config)
     write_outputs(pairs, patterns, errors, stats, output_dir)
 
     print(f"Loaded cases: {len(cases)}")
     print(f"Loaded dialogues: {len(dialogues)}")
     print(f"Matched cases: {stats.matched_cases}")
     print(f"Matched dialogues: {stats.matched_dialogues}")
+    print(f"Analyzed cases: {len(analysis_pairs)}")
     print(f"Outputs written to: {output_dir}")
 
 
@@ -45,6 +48,12 @@ def resolve_path(base_dir: Path, value: str) -> Path:
     return path if path.is_absolute() else base_dir / path
 
 
+def select_pairs_for_analysis(pairs, max_cases: int):
+    ranked = sorted(pairs, key=lambda pair: len(pair.dialogues), reverse=True)
+    if max_cases and max_cases > 0:
+        return ranked[:max_cases]
+    return ranked
+
+
 if __name__ == "__main__":
     main()
-

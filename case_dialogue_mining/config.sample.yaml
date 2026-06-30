@@ -21,6 +21,7 @@ dialogue_fields:
     - "final_case_id"
 
 analysis:
+  max_cases: 0
   max_dialogues_per_case: 5
   max_turns_per_dialogue: 12
   max_chars_per_dialogue: 3000
@@ -33,4 +34,3 @@ local_ai:
   temperature: 0.2
   max_tokens: 2048
   timeout: 60
-

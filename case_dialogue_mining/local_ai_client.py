@@ -47,6 +47,10 @@ class OpenAICompatibleLocalAIClient(LocalAIClient):
         temperature: float = 0.2,
         max_tokens: int = 2048,
         timeout: int = 60,
+        top_p: float | None = None,
+        presence_penalty: float | None = None,
+        top_k: int | None = None,
+        enable_thinking: bool | None = None,
     ):
         self.endpoint = endpoint
         self.model = model
@@ -54,6 +58,10 @@ class OpenAICompatibleLocalAIClient(LocalAIClient):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.top_p = top_p
+        self.presence_penalty = presence_penalty
+        self.top_k = top_k
+        self.enable_thinking = enable_thinking
 
     def generate(self, prompt: str) -> str:
         payload = {
@@ -65,6 +73,14 @@ class OpenAICompatibleLocalAIClient(LocalAIClient):
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.presence_penalty is not None:
+            payload["presence_penalty"] = self.presence_penalty
+        if self.top_k is not None:
+            payload["top_k"] = self.top_k
+        if self.enable_thinking is not None:
+            payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -99,6 +115,10 @@ def build_local_ai_client(config: Dict[str, Any]) -> LocalAIClient:
             temperature=float(config.get("temperature", 0.2)),
             max_tokens=int(config.get("max_tokens", 2048)),
             timeout=int(config.get("timeout", 60)),
+            top_p=_optional_float(config.get("top_p")),
+            presence_penalty=_optional_float(config.get("presence_penalty")),
+            top_k=_optional_int(config.get("top_k")),
+            enable_thinking=_optional_bool(config.get("enable_thinking")),
         )
     raise ValueError(f"Unsupported local_ai provider: {provider}")
 
@@ -127,3 +147,23 @@ def _extract_user_lines(payload: Dict[str, Any]) -> list[str]:
             if line.startswith("用户:") or line.startswith("用户："):
                 lines.append(line.split(":", 1)[-1].split("：", 1)[-1].strip())
     return lines
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}

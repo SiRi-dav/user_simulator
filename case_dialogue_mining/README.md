@@ -56,6 +56,7 @@ run:
 
 ```bash
 cd /mnt/nas1/users/CuhkszTeam/xirui/case_dialogue_mining
+export LOCAL_AI_API_KEY="EMPTY"
 python main.py --config config.yaml
 ```
 
@@ -67,6 +68,31 @@ python main.py --config config.yaml
 - dialogue id is the outer JSON key;
 - dialogue target case is `caseId`;
 - dialogue turns are role-prefixed strings in `text`, for example `用户: ...` and `客服: ...`.
+
+The default local AI config uses the Qwen endpoint shown in the server example:
+
+```yaml
+local_ai:
+  provider: "openai-compatible"
+  endpoint: "http://localhost:8850/v1/chat/completions"
+  model: "qwen3-32b"
+  api_key_env: "LOCAL_AI_API_KEY"
+  temperature: 0.3
+  max_tokens: 2048
+  top_p: 0.5
+  presence_penalty: 1.5
+  top_k: 1
+  enable_thinking: false
+```
+
+To avoid sending thousands of requests at once, `analysis.max_cases` limits AI analysis to the top cases by dialogue count:
+
+```yaml
+analysis:
+  max_cases: 100
+```
+
+Set `max_cases: 0` to analyze all matched cases.
 
 For local keyed sample validation:
 
