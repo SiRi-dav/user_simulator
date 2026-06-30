@@ -1,0 +1,4 @@
+{"case_id":"KB_MEETING_ATTENDANCE_EXPORT","title":"查询会议入会时间与导出与会记录","phenomenon":"用户想查询自己参加某个会议的入会时间，或需要导出与会人记录。","solution":"可联系会议预定人导出与会人记录；后台导出通常需要预定人同意。"}
+{"case_id":"KB_PC_BOOT_FAILURE","title":"电脑无法开机现场 IT 支持流程","phenomenon":"用户反馈电脑无法开机、现场设备无法使用。","solution":"先确认是否无法开机；若在办事处可咨询前台查询现场 IT 联系方式；必要时走自助报障或现场支持流程。"}
+{"case_id":"KB_PUBLIC_ACCOUNT_PASSWORD","title":"公共账号密码查看与修改","phenomenon":"用户已申请公共账号，但不清楚初始密码从哪里获取，或需要修改公共账号密码。","solution":"申请完成后密码通常发送给创建人和责任人；如需修改密码，可进入账号密码修改页面处理。"}
+
