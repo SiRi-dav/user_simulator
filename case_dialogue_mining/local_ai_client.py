@@ -133,10 +133,11 @@ def build_local_ai_client(config: Dict[str, Any]) -> LocalAIClient:
         return MockLocalAIClient()
     if provider == "openai-compatible":
         api_key_env = config.get("api_key_env", "LOCAL_AI_API_KEY")
+        api_key = os.getenv(api_key_env) or str(config.get("api_key") or "")
         return OpenAICompatibleLocalAIClient(
             endpoint=config["endpoint"],
             model=config["model"],
-            api_key=os.getenv(api_key_env, ""),
+            api_key=api_key,
             temperature=float(config.get("temperature", 0.2)),
             max_tokens=int(config.get("max_tokens", 2048)),
             timeout=int(config.get("timeout", 60)),

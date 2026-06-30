@@ -32,6 +32,7 @@ def main() -> None:
     parser.add_argument("--rewrite-provider", default="mock", choices=["mock", "openai-compatible"], help="LLM provider for user utterance rewriting")
     parser.add_argument("--rewrite-endpoint", default="http://localhost:8850/v1/chat/completions")
     parser.add_argument("--rewrite-model", default="qwen3-32b")
+    parser.add_argument("--rewrite-api-key", default="EMPTY")
     parser.add_argument("--rewrite-api-key-env", default="LOCAL_AI_API_KEY")
     parser.add_argument("--rewrite-temperature", type=float, default=0.7)
     parser.add_argument("--rewrite-max-tokens", type=int, default=256)
@@ -75,6 +76,7 @@ def build_rewrite_client(args: argparse.Namespace) -> LocalAIClient:
             "provider": args.rewrite_provider,
             "endpoint": args.rewrite_endpoint,
             "model": args.rewrite_model,
+            "api_key": args.rewrite_api_key,
             "api_key_env": args.rewrite_api_key_env,
             "temperature": args.rewrite_temperature,
             "max_tokens": args.rewrite_max_tokens,

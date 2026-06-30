@@ -178,8 +178,6 @@ The simulator writes both machine-readable JSONL and a human-readable Markdown f
 By default, user utterances are rule-generated. To let the local model only rewrite user wording while the rule state machine still controls what facts are revealed:
 
 ```bash
-export LOCAL_AI_API_KEY="EMPTY"
-
 python simulate_from_patterns.py \
   --patterns outputs/question_patterns.jsonl \
   --output outputs/simulated_dialogues.hard.llm.jsonl \
@@ -191,6 +189,8 @@ python simulate_from_patterns.py \
 ```
 
 This does not let the model decide which slot to reveal; it only rewrites the already selected user sentence.
+
+The local NAS-style endpoint uses `api_key="EMPTY"` by default. If the server later requires a real key, set `LOCAL_AI_API_KEY` and it will override the default.
 
 To emit only the user plan/opening without mock QA:
 
