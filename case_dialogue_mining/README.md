@@ -121,6 +121,34 @@ This writes:
 - `outputs/question_patterns.review.md`
 - `outputs/question_patterns.review.masked.jsonl`
 
+## Lightweight Simulator MVP
+
+After `question_patterns.jsonl` is generated, run a first simulator version directly from the mined patterns:
+
+```bash
+python simulate_from_patterns.py \
+  --patterns outputs/question_patterns.jsonl \
+  --output outputs/simulated_dialogues.jsonl \
+  --mode replay_like \
+  --limit 20
+```
+
+Available user modes:
+
+- `replay_like`: close to historical user reveal rhythm
+- `vague_user`: starts vague and forces clarification
+- `difficult_user`: confused, less satisfied, asks for more concrete guidance
+
+The MVP uses a deterministic mock QA opponent by default. It is meant to validate user behavior and data shape first; later the mock QA can be replaced by the real客服 AI endpoint.
+
+Simulator output masks URLs, emails, phone numbers, and long numeric IDs by default. Use `--no-mask` only for internal debugging on approved machines.
+
+To emit only the user plan/opening without mock QA:
+
+```bash
+python simulate_from_patterns.py --patterns outputs/question_patterns.jsonl --agent none
+```
+
 For local keyed sample validation:
 
 ```bash
