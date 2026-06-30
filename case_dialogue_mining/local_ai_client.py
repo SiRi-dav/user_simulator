@@ -74,6 +74,7 @@ class OpenAICompatibleLocalAIClient(LocalAIClient):
         presence_penalty: float | None = None,
         top_k: int | None = None,
         enable_thinking: bool | None = None,
+        system_prompt: str = "你是企业客服数据分析专家，只输出 JSON。",
     ):
         self.endpoint = endpoint
         self.model = model
@@ -85,12 +86,13 @@ class OpenAICompatibleLocalAIClient(LocalAIClient):
         self.presence_penalty = presence_penalty
         self.top_k = top_k
         self.enable_thinking = enable_thinking
+        self.system_prompt = system_prompt
 
     def generate(self, prompt: str) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "你是企业客服数据分析专家，只输出 JSON。"},
+                {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt},
             ],
             "temperature": self.temperature,
@@ -142,6 +144,7 @@ def build_local_ai_client(config: Dict[str, Any]) -> LocalAIClient:
             presence_penalty=_optional_float(config.get("presence_penalty")),
             top_k=_optional_int(config.get("top_k")),
             enable_thinking=_optional_bool(config.get("enable_thinking")),
+            system_prompt=str(config.get("system_prompt") or "你是企业客服数据分析专家，只输出 JSON。"),
         )
     raise ValueError(f"Unsupported local_ai provider: {provider}")
 

@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from local_ai_client import LocalAIClient, MockLocalAIClient, build_local_ai_client
 from utils import read_jsonl, write_jsonl
 
 
@@ -28,6 +29,13 @@ def main() -> None:
     parser.add_argument("--agent", default="mock", choices=["mock", "none"], help="Use mock QA opponent or only emit user plan")
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
     parser.add_argument("--readable-output", default="", help="Optional readable Markdown output path")
+    parser.add_argument("--rewrite-provider", default="mock", choices=["mock", "openai-compatible"], help="LLM provider for user utterance rewriting")
+    parser.add_argument("--rewrite-endpoint", default="http://localhost:8850/v1/chat/completions")
+    parser.add_argument("--rewrite-model", default="qwen3-32b")
+    parser.add_argument("--rewrite-api-key-env", default="LOCAL_AI_API_KEY")
+    parser.add_argument("--rewrite-temperature", type=float, default=0.7)
+    parser.add_argument("--rewrite-max-tokens", type=int, default=256)
+    parser.add_argument("--rewrite-timeout", type=int, default=60)
     args = parser.parse_args()
 
     patterns = [record for record in read_jsonl(Path(args.patterns)) if not record.get("parse_error")]
@@ -36,8 +44,15 @@ def main() -> None:
     if args.limit > 0:
         patterns = patterns[: args.limit]
 
+    rewrite_client = build_rewrite_client(args)
     results = [
-        simulate_case(pattern, mode=args.mode, max_turns=args.max_turns, agent=args.agent)
+        simulate_case(
+            pattern,
+            mode=args.mode,
+            max_turns=args.max_turns,
+            agent=args.agent,
+            rewrite_client=rewrite_client,
+        )
         for pattern in patterns
     ]
     if not args.no_mask:
@@ -52,13 +67,45 @@ def main() -> None:
     print(f"Readable output written to: {readable_path}")
 
 
-def simulate_case(pattern: Dict[str, Any], mode: str, max_turns: int, agent: str) -> Dict[str, Any]:
+def build_rewrite_client(args: argparse.Namespace) -> LocalAIClient:
+    if args.rewrite_provider == "mock":
+        return MockLocalAIClient()
+    return build_local_ai_client(
+        {
+            "provider": args.rewrite_provider,
+            "endpoint": args.rewrite_endpoint,
+            "model": args.rewrite_model,
+            "api_key_env": args.rewrite_api_key_env,
+            "temperature": args.rewrite_temperature,
+            "max_tokens": args.rewrite_max_tokens,
+            "timeout": args.rewrite_timeout,
+            "enable_thinking": False,
+            "system_prompt": "你是企业客服场景中的用户话语改写器，只输出用户话语。",
+        }
+    )
+
+
+def simulate_case(
+    pattern: Dict[str, Any],
+    mode: str,
+    max_turns: int,
+    agent: str,
+    rewrite_client: LocalAIClient,
+) -> Dict[str, Any]:
     state = build_initial_state(pattern, mode)
     turns: List[Dict[str, Any]] = []
     agent_response: Optional[str] = None
 
     for user_turn_id in range(1, max_turns + 1):
         user_text, user_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id)
+        user_text = rewrite_user_utterance(
+            text=user_text,
+            action=user_action,
+            pattern=pattern,
+            mode=mode,
+            agent_response=agent_response,
+            rewrite_client=rewrite_client,
+        )
         turns.append(
             {
                 "role": "user",
@@ -84,6 +131,14 @@ def simulate_case(pattern: Dict[str, Any], mode: str, max_turns: int, agent: str
         agent_response = agent_step["text"]
         if agent_step["action"] == "answer" and mode != "difficult_user":
             final_text, final_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id + 1)
+            final_text = rewrite_user_utterance(
+                text=final_text,
+                action=final_action,
+                pattern=pattern,
+                mode=mode,
+                agent_response=agent_response,
+                rewrite_client=rewrite_client,
+            )
             turns.append(
                 {
                     "role": "user",
@@ -107,6 +162,75 @@ def simulate_case(pattern: Dict[str, Any], mode: str, max_turns: int, agent: str
             "used_opening": state["used_opening"],
         },
     }
+
+
+def rewrite_user_utterance(
+    text: str,
+    action: str,
+    pattern: Dict[str, Any],
+    mode: str,
+    agent_response: Optional[str],
+    rewrite_client: LocalAIClient,
+) -> str:
+    if isinstance(rewrite_client, MockLocalAIClient):
+        return text
+    prompt = build_rewrite_prompt(text, action, pattern, mode, agent_response)
+    try:
+        rewritten = rewrite_client.generate(prompt).strip()
+    except Exception as exc:
+        print(f"rewrite failed for {pattern.get('case_id')}: {exc}", flush=True)
+        return text
+    rewritten = strip_wrapping_quotes(rewritten)
+    if not rewritten:
+        return text
+    if len(rewritten) > 160:
+        return text
+    return rewritten
+
+
+def build_rewrite_prompt(
+    text: str,
+    action: str,
+    pattern: Dict[str, Any],
+    mode: str,
+    agent_response: Optional[str],
+) -> str:
+    payload = {
+        "case_id": pattern.get("case_id"),
+        "mode": mode,
+        "user_action": action,
+        "agent_response": agent_response or "",
+        "original_user_text": text,
+        "user_style_summary": pattern.get("user_style_summary", ""),
+        "opening_examples": pattern.get("initial_question_patterns", [])[:3],
+        "constraints": [
+            "只输出一句用户会说的话",
+            "不要替客服回答",
+            "不要新增具体电话、邮箱、URL、账号、人员姓名",
+            "不要改变原句必须表达的信息",
+            "长度控制在80个中文字符以内",
+        ],
+    }
+    return f"""
+你是企业内部客服问答场景中的用户话语改写器。
+
+任务：把 original_user_text 改写得更像真实员工用户说的话。
+你只能润色表达，不允许改变用户状态，不允许新增事实。
+
+输入：
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+请只输出改写后的用户话语，不要输出 JSON、解释或代码块。
+""".strip()
+
+
+def strip_wrapping_quotes(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```(?:text|json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    if text.startswith("{") and text.endswith("}"):
+        return ""
+    return text.strip('"“”')
 
 
 def build_initial_state(pattern: Dict[str, Any], mode: str) -> Dict[str, Any]:

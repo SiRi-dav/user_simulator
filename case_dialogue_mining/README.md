@@ -175,6 +175,23 @@ The simulator writes both machine-readable JSONL and a human-readable Markdown f
 - `outputs/simulated_dialogues.hard.jsonl`
 - `outputs/simulated_dialogues.hard.readable.md`
 
+By default, user utterances are rule-generated. To let the local model only rewrite user wording while the rule state machine still controls what facts are revealed:
+
+```bash
+export LOCAL_AI_API_KEY="EMPTY"
+
+python simulate_from_patterns.py \
+  --patterns outputs/question_patterns.jsonl \
+  --output outputs/simulated_dialogues.hard.llm.jsonl \
+  --mode difficult_user \
+  --limit 20 \
+  --rewrite-provider openai-compatible \
+  --rewrite-endpoint http://localhost:8850/v1/chat/completions \
+  --rewrite-model qwen3-32b
+```
+
+This does not let the model decide which slot to reveal; it only rewrites the already selected user sentence.
+
 To emit only the user plan/opening without mock QA:
 
 ```bash
