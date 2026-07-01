@@ -21,8 +21,12 @@ LONG_ID_RE = re.compile(r"(?<![A-Za-z0-9])\d{8,}(?![A-Za-z0-9])")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run a lightweight user simulator from question_patterns.jsonl.")
-    parser.add_argument("--patterns", default="outputs/question_patterns.jsonl", help="question_patterns.jsonl path")
+    parser = argparse.ArgumentParser(description="Run a lightweight user simulator from case-only question patterns.")
+    parser.add_argument(
+        "--patterns",
+        default="outputs_case_only/question_patterns.case_only.jsonl",
+        help="Pattern JSONL path. Defaults to case-only analysis output.",
+    )
     parser.add_argument("--output", default="", help="Output JSONL path. Defaults to outputs/simulated_dialogues.<scenario>[.llm].jsonl")
     parser.add_argument("--case-id", default="", help="Optional target case_id")
     parser.add_argument("--limit", type=int, default=10, help="Maximum cases to simulate. Use 0 for all.")

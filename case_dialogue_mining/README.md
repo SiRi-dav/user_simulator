@@ -174,10 +174,25 @@ The case-only prompt outputs the same three-block schema as `question_patterns.j
 
 ## Lightweight Simulator MVP
 
-After `question_patterns.jsonl` is generated, run a first simulator version directly from the mined patterns:
+After `outputs_case_only/question_patterns.case_only.jsonl` is generated, run a first simulator version directly from the case-only patterns:
 
 ```bash
 python simulate_from_patterns.py \
+  --scenario replay_like \
+  --limit 20
+```
+
+The simulator now defaults to:
+
+```text
+outputs_case_only/question_patterns.case_only.jsonl
+```
+
+To switch back to case-dialogue mining results, pass:
+
+```bash
+python simulate_from_patterns.py \
+  --patterns outputs/question_patterns.jsonl \
   --scenario replay_like \
   --limit 20
 ```
