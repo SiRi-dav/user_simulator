@@ -395,10 +395,13 @@ def build_policy_prompt(
             "普通合作用户通常先说主要现象，被追问后透露1个或少量槽位。",
             "模糊、低技术、依赖截图或困难用户应少量透露信息，可能需要多次追问才补充关键事实。",
             "急躁用户会催促，但仍可能提供对定位有帮助的信息。",
+            "如果客服反问的内容能对应 available_hidden_slots 中的某些项，用户应根据 persona 透露这些 slot。",
+            "如果客服反问的内容不在 available_hidden_slots 中，或该 persona 按设定并不知道，用户应明确说不知道/不清楚，不要编造。",
+            "如果客服一次问多个问题，清楚且高技术用户可以回答多个可用 slot；模糊或低技术用户通常只回答一部分。",
             "如果客服已经给出明确方案，用户可根据 persona 接受、追问细节或说明试过无效。",
         ],
         "output_schema": {
-            "action": "opening | reveal_slot | proactive_followup | ask_more_detail | accept_solution | solution_failed | no_more_info | give_up",
+            "action": "opening | reveal_slot | proactive_followup | unknown_info | ask_more_detail | accept_solution | solution_failed | no_more_info | give_up",
             "text": "用户本轮自然话语",
             "reveal_slot_indices": "本轮要透露的 available_hidden_slots index 列表；不透露则为空列表",
         },
@@ -410,6 +413,8 @@ def build_policy_prompt(
 - 只能围绕 case_grounding 中的目标问题，不要换 case。
 - 只能从 available_hidden_slots 选择要透露的隐藏信息，不要编造新的具体事实。
 - reveal_slot_indices 必须是 available_hidden_slots 中存在的 index。
+- 客服问到 available_hidden_slots 中已有的信息时，可以选择对应 index 并在 text 中回答。
+- 客服问到用户不知道、看不到、没有被提供的信息时，reveal_slot_indices 为空，action 用 unknown_info，并在 text 中自然表达不知道/不清楚。
 - text 必须体现 persona 的技术水平、清晰度、配合程度、耐心和语言风格。
 - 不要替客服回答，不要输出电话、邮箱、URL、账号、人员姓名等敏感细节。
 - 只输出 JSON，不要代码块，不要解释。

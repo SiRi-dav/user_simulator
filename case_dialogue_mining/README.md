@@ -272,7 +272,7 @@ python simulate_from_patterns.py \
   --llm-policy
 ```
 
-The policy LLM can choose the next user action and `reveal_slot_indices`, but it is constrained to the existing `slot_reveal_plan`, `hidden_facts`, and `common_missing_slots`. If the policy call fails, the simulator falls back to the deterministic rule policy.
+The policy LLM can choose the next user action and `reveal_slot_indices`, but it is constrained to the existing `slot_reveal_plan`, `hidden_facts`, and `common_missing_slots`. It should answer a clarification only when the asked information matches available hidden slots; if the user persona would not know the requested information, it should reply with `unknown_info` and leave `reveal_slot_indices` empty. If the policy call fails, the simulator falls back to the deterministic rule policy.
 
 To let the local model only rewrite user wording while keeping the rule policy in charge of facts and timing:
 
