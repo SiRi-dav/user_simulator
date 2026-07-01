@@ -255,6 +255,21 @@ Built-in persona ids:
 
 The MVP uses a deterministic mock QA opponent by default. It is meant to validate user behavior and data shape first; later the mock QA can be replaced by the real客服 AI endpoint.
 
+To replay historical客服 turns one by one instead of generating rule-based mock replies, use `--agent replay`. This reads the historical dialogue file from `--config` and selects the first matched dialogue for each `case_id`:
+
+```bash
+python simulate_from_patterns.py \
+  --config config.yaml \
+  --patterns outputs/question_patterns.jsonl \
+  --agent replay \
+  --scenario replay_like \
+  --persona low_tech_confused \
+  --limit 20 \
+  --llm-policy
+```
+
+Replay mode keeps the simulated user active, but the客服 side is copied from the historical dialogue's agent turns in order. If no historical dialogue is found for a case, it falls back to the deterministic mock QA opponent.
+
 Simulator output masks URLs, emails, phone numbers, and long numeric IDs by default. Use `--no-mask` only for internal debugging on approved machines.
 
 The simulator writes both machine-readable JSONL and a human-readable Markdown file. For example:

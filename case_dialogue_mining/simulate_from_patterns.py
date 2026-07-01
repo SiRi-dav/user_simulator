@@ -6,9 +6,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from data_loader import load_dialogues
 from local_ai_client import LocalAIClient, MockLocalAIClient, build_local_ai_client
 from persona_bank import choose_persona, load_personas, persona_summary
-from utils import read_jsonl, write_jsonl
+from utils import parse_simple_yaml, read_jsonl, write_jsonl
 
 
 CLARIFICATION_HINTS = ("请问", "是否", "能否", "提供", "补充", "具体", "哪个", "什么")
@@ -32,6 +33,7 @@ def main() -> None:
         default="",
         help="Output JSONL path. Defaults to outputs/simulated_dialogues.<scenario>[.policy][.llm].jsonl",
     )
+    parser.add_argument("--config", default="config.yaml", help="Config file used to load historical dialogues for --agent replay")
     parser.add_argument("--case-id", default="", help="Optional target case_id")
     parser.add_argument("--limit", type=int, default=10, help="Maximum cases to simulate. Use 0 for all.")
     parser.add_argument("--scenario", default="", choices=SCENARIOS, help="Evaluation scenario")
@@ -40,7 +42,12 @@ def main() -> None:
     parser.add_argument("--persona-bank", default="", help="Optional JSON persona bank path. Defaults to built-in personas.")
     parser.add_argument("--list-personas", action="store_true", help="List available personas and exit")
     parser.add_argument("--max-turns", type=int, default=6, help="Maximum user turns")
-    parser.add_argument("--agent", default="mock", choices=["mock", "none"], help="Use mock QA opponent or only emit user plan")
+    parser.add_argument(
+        "--agent",
+        default="mock",
+        choices=["mock", "replay", "none"],
+        help="Use rule mock, replay historical agent turns, or only emit user plan",
+    )
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
     parser.add_argument("--readable-output", default="", help="Optional readable Markdown output path")
     parser.add_argument("--llm-rewrite", action="store_true", help="Shortcut for --rewrite-provider openai-compatible")
@@ -83,12 +90,14 @@ def main() -> None:
 
     rewrite_client = build_rewrite_client(args)
     policy_client = build_policy_client(args)
+    replay_dialogues = load_replay_dialogues(args)
     results = [
         simulate_case(
             pattern,
             scenario=scenario,
             max_turns=args.max_turns,
             agent=args.agent,
+            replay_dialogues=replay_dialogues,
             rewrite_client=rewrite_client,
             policy_client=policy_client,
             personas=personas,
@@ -101,7 +110,7 @@ def main() -> None:
     output_path = (
         Path(args.output)
         if args.output
-        else default_output_path(scenario, args.rewrite_provider, args.persona, args.policy_provider)
+        else default_output_path(scenario, args.rewrite_provider, args.persona, args.policy_provider, args.agent)
     )
     readable_path = Path(args.readable_output) if args.readable_output else default_readable_path(output_path)
     write_jsonl(results, output_path)
@@ -155,9 +164,11 @@ def default_output_path(
     rewrite_provider: str,
     persona_id: str = "auto",
     policy_provider: str = "mock",
+    agent: str = "mock",
 ) -> Path:
     suffix = ".policy" if policy_provider != "mock" else ""
     suffix += ".llm" if rewrite_provider != "mock" else ""
+    suffix += ".replay" if agent == "replay" else ""
     persona_suffix = "" if not persona_id or persona_id == "auto" else f".{persona_id}"
     return Path("outputs") / f"simulated_dialogues.{scenario}{persona_suffix}{suffix}.jsonl"
 
@@ -167,6 +178,7 @@ def simulate_case(
     scenario: str,
     max_turns: int,
     agent: str,
+    replay_dialogues: Dict[str, List[Dict[str, Any]]],
     rewrite_client: LocalAIClient,
     policy_client: LocalAIClient,
     personas: List[Dict[str, Any]],
@@ -176,6 +188,8 @@ def simulate_case(
     state = build_initial_state(pattern, scenario, persona)
     turns: List[Dict[str, Any]] = []
     agent_response: Optional[str] = None
+    replay_context = choose_replay_context(replay_dialogues, str(pattern.get("case_id") or ""))
+    replay_turn_index = 0
 
     for user_turn_id in range(1, max_turns + 1):
         user_text, user_action = choose_user_turn(
@@ -209,7 +223,17 @@ def simulate_case(
         if user_action in {"accept_solution", "give_up"} or agent == "none":
             break
 
-        agent_step = mock_agent_step(pattern, user_turn_id, user_text, state)
+        agent_step, replay_turn_index = agent_step_for_mode(
+            pattern=pattern,
+            user_turn_id=user_turn_id,
+            user_text=user_text,
+            state=state,
+            agent=agent,
+            replay_context=replay_context,
+            replay_turn_index=replay_turn_index,
+        )
+        if agent_step["action"] == "end_replay":
+            break
         turns.append(
             {
                 "role": "agent",
@@ -217,10 +241,12 @@ def simulate_case(
                 "text": agent_step["text"],
                 "action": agent_step["action"],
                 "recommended_case_id": agent_step.get("recommended_case_id"),
+                "replay_dialogue_id": agent_step.get("replay_dialogue_id"),
+                "replay_turn_index": agent_step.get("replay_turn_index"),
             }
         )
         agent_response = agent_step["text"]
-        if agent_step["action"] == "answer" and scenario != "difficult_user":
+        if agent != "replay" and agent_step["action"] == "answer" and scenario != "difficult_user":
             final_text, final_action = choose_user_turn(
                 pattern=pattern,
                 state=state,
@@ -269,7 +295,85 @@ def simulate_case(
             "remaining_slots": [slot["slot"] for slot in state["slots"]],
             "used_opening": state["used_opening"],
         },
+        "agent_source": {
+            "mode": agent,
+            "replay_dialogue_id": replay_context.get("dialogue_id") if replay_context else "",
+        },
     }
+
+
+def load_replay_dialogues(args: argparse.Namespace) -> Dict[str, List[Dict[str, Any]]]:
+    if args.agent != "replay":
+        return {}
+    config_path = Path(args.config)
+    config = parse_simple_yaml(config_path)
+    paths = config.get("paths", {})
+    if not paths.get("dialogues"):
+        raise ValueError("--agent replay requires paths.dialogues in config")
+    dialogues_path = resolve_path(config_path.parent, paths["dialogues"])
+    dialogues = load_dialogues(dialogues_path, config.get("dialogue_fields", {}))
+    by_case: Dict[str, List[Dict[str, Any]]] = {}
+    for dialogue in dialogues:
+        if not dialogue.case_id:
+            continue
+        agent_turns = [turn.text for turn in dialogue.turns if turn.role == "agent" and turn.text.strip()]
+        if not agent_turns:
+            continue
+        by_case.setdefault(dialogue.case_id, []).append(
+            {
+                "dialogue_id": dialogue.dialogue_id,
+                "agent_turns": agent_turns,
+            }
+        )
+    return by_case
+
+
+def choose_replay_context(
+    replay_dialogues: Dict[str, List[Dict[str, Any]]],
+    case_id: str,
+) -> Dict[str, Any]:
+    candidates = replay_dialogues.get(case_id) or []
+    if not candidates:
+        return {}
+    return candidates[0]
+
+
+def agent_step_for_mode(
+    pattern: Dict[str, Any],
+    user_turn_id: int,
+    user_text: str,
+    state: Dict[str, Any],
+    agent: str,
+    replay_context: Dict[str, Any],
+    replay_turn_index: int,
+) -> tuple[Dict[str, Any], int]:
+    if agent == "replay" and replay_context:
+        agent_turns = replay_context.get("agent_turns") or []
+        if replay_turn_index < len(agent_turns):
+            return (
+                {
+                    "action": classify_agent_action(str(agent_turns[replay_turn_index])),
+                    "text": str(agent_turns[replay_turn_index]),
+                    "replay_dialogue_id": replay_context.get("dialogue_id"),
+                    "replay_turn_index": replay_turn_index,
+                },
+                replay_turn_index + 1,
+            )
+        return {"action": "end_replay", "text": ""}, replay_turn_index
+    return mock_agent_step(pattern, user_turn_id, user_text, state), replay_turn_index
+
+
+def classify_agent_action(text: str) -> str:
+    if looks_like_solution(text):
+        return "answer"
+    if looks_like_clarification(text):
+        return "ask_clarification"
+    return "historical_agent_reply"
+
+
+def resolve_path(base_dir: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else base_dir / path
 
 
 def choose_user_turn(
@@ -955,6 +1059,10 @@ def build_readable_report(results: List[Dict[str, Any]]) -> str:
             lines.append(f"**{role} {turn_id}** [{action}]: {text}")
             if turn.get("recommended_case_id"):
                 lines.append(f"> recommended_case_id: {turn.get('recommended_case_id')}")
+            if turn.get("replay_dialogue_id"):
+                lines.append(
+                    f"> replay: {turn.get('replay_dialogue_id')}#{turn.get('replay_turn_index')}"
+                )
             revealed = turn.get("revealed_slots") or []
             if revealed and turn.get("role") == "user":
                 lines.append(f"> revealed: {'；'.join(str(item) for item in revealed[-3:])}")
