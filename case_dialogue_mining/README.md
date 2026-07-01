@@ -154,15 +154,15 @@ After `question_patterns.jsonl` is generated, run a first simulator version dire
 
 ```bash
 python simulate_from_patterns.py \
-  --mode replay_like \
+  --scenario replay_like \
   --limit 20
 ```
 
-Available user modes:
+Available evaluation scenarios:
 
-- `replay_like`: close to historical user reveal rhythm
-- `vague_user`: starts vague and forces clarification
-- `difficult_user`: confused, less satisfied, asks for more concrete guidance
+- `replay_like`: baseline scenario close to historical user reveal rhythm
+- `vague_user`: sparse-information scenario that forces clarification
+- `difficult_user`: stress-test scenario with more confusion and post-solution friction
 
 The simulator now follows two lines:
 
@@ -179,7 +179,7 @@ To force one persona:
 
 ```bash
 python simulate_from_patterns.py \
-  --mode replay_like \
+  --scenario replay_like \
   --persona low_tech_confused \
   --limit 20
 ```
@@ -206,7 +206,7 @@ By default, user utterances are rule-generated. To let the local model only rewr
 
 ```bash
 python simulate_from_patterns.py \
-  --mode difficult_user \
+  --scenario difficult_user \
   --persona low_tech_confused \
   --limit 20 \
   --llm-rewrite
@@ -221,6 +221,8 @@ To emit only the user plan/opening without mock QA:
 ```bash
 python simulate_from_patterns.py --agent none
 ```
+
+`--mode` is still accepted as a deprecated alias for old commands, but new runs should use `--scenario`.
 
 For local keyed sample validation:
 
