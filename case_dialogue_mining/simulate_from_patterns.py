@@ -27,7 +27,11 @@ def main() -> None:
         default="outputs_case_only/question_patterns.case_only.jsonl",
         help="Pattern JSONL path. Defaults to case-only analysis output.",
     )
-    parser.add_argument("--output", default="", help="Output JSONL path. Defaults to outputs/simulated_dialogues.<scenario>[.llm].jsonl")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Output JSONL path. Defaults to outputs/simulated_dialogues.<scenario>[.policy][.llm].jsonl",
+    )
     parser.add_argument("--case-id", default="", help="Optional target case_id")
     parser.add_argument("--limit", type=int, default=10, help="Maximum cases to simulate. Use 0 for all.")
     parser.add_argument("--scenario", default="", choices=SCENARIOS, help="Evaluation scenario")
@@ -40,6 +44,15 @@ def main() -> None:
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
     parser.add_argument("--readable-output", default="", help="Optional readable Markdown output path")
     parser.add_argument("--llm-rewrite", action="store_true", help="Shortcut for --rewrite-provider openai-compatible")
+    parser.add_argument("--llm-policy", action="store_true", help="Let the local LLM choose user actions and slot reveal timing")
+    parser.add_argument("--policy-provider", default="mock", choices=["mock", "openai-compatible"], help="LLM provider for user dialogue policy")
+    parser.add_argument("--policy-endpoint", default="http://localhost:8850/v1/chat/completions")
+    parser.add_argument("--policy-model", default="qwen3-32b")
+    parser.add_argument("--policy-api-key", default="EMPTY")
+    parser.add_argument("--policy-api-key-env", default="LOCAL_AI_API_KEY")
+    parser.add_argument("--policy-temperature", type=float, default=0.4)
+    parser.add_argument("--policy-max-tokens", type=int, default=512)
+    parser.add_argument("--policy-timeout", type=int, default=90)
     parser.add_argument("--rewrite-provider", default="mock", choices=["mock", "openai-compatible"], help="LLM provider for user utterance rewriting")
     parser.add_argument("--rewrite-endpoint", default="http://localhost:8850/v1/chat/completions")
     parser.add_argument("--rewrite-model", default="qwen3-32b")
@@ -51,6 +64,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.llm_rewrite:
         args.rewrite_provider = "openai-compatible"
+    if args.llm_policy:
+        args.policy_provider = "openai-compatible"
     scenario = args.scenario or args.mode or "replay_like"
     if args.mode and not args.scenario:
         print("Warning: --mode is deprecated; use --scenario instead.", flush=True)
@@ -67,6 +82,7 @@ def main() -> None:
         patterns = patterns[: args.limit]
 
     rewrite_client = build_rewrite_client(args)
+    policy_client = build_policy_client(args)
     results = [
         simulate_case(
             pattern,
@@ -74,6 +90,7 @@ def main() -> None:
             max_turns=args.max_turns,
             agent=args.agent,
             rewrite_client=rewrite_client,
+            policy_client=policy_client,
             personas=personas,
             persona_id=args.persona,
         )
@@ -81,7 +98,11 @@ def main() -> None:
     ]
     if not args.no_mask:
         results = [mask_value(result) for result in results]
-    output_path = Path(args.output) if args.output else default_output_path(scenario, args.rewrite_provider, args.persona)
+    output_path = (
+        Path(args.output)
+        if args.output
+        else default_output_path(scenario, args.rewrite_provider, args.persona, args.policy_provider)
+    )
     readable_path = Path(args.readable_output) if args.readable_output else default_readable_path(output_path)
     write_jsonl(results, output_path)
     readable_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,8 +131,33 @@ def build_rewrite_client(args: argparse.Namespace) -> LocalAIClient:
     )
 
 
-def default_output_path(scenario: str, rewrite_provider: str, persona_id: str = "auto") -> Path:
-    suffix = ".llm" if rewrite_provider != "mock" else ""
+def build_policy_client(args: argparse.Namespace) -> LocalAIClient:
+    if args.policy_provider == "mock":
+        return MockLocalAIClient()
+    return build_local_ai_client(
+        {
+            "provider": args.policy_provider,
+            "endpoint": args.policy_endpoint,
+            "model": args.policy_model,
+            "api_key": args.policy_api_key,
+            "api_key_env": args.policy_api_key_env,
+            "temperature": args.policy_temperature,
+            "max_tokens": args.policy_max_tokens,
+            "timeout": args.policy_timeout,
+            "enable_thinking": False,
+            "system_prompt": "你是企业客服场景中的用户模拟策略器，只输出 JSON。",
+        }
+    )
+
+
+def default_output_path(
+    scenario: str,
+    rewrite_provider: str,
+    persona_id: str = "auto",
+    policy_provider: str = "mock",
+) -> Path:
+    suffix = ".policy" if policy_provider != "mock" else ""
+    suffix += ".llm" if rewrite_provider != "mock" else ""
     persona_suffix = "" if not persona_id or persona_id == "auto" else f".{persona_id}"
     return Path("outputs") / f"simulated_dialogues.{scenario}{persona_suffix}{suffix}.jsonl"
 
@@ -122,6 +168,7 @@ def simulate_case(
     max_turns: int,
     agent: str,
     rewrite_client: LocalAIClient,
+    policy_client: LocalAIClient,
     personas: List[Dict[str, Any]],
     persona_id: str,
 ) -> Dict[str, Any]:
@@ -131,7 +178,16 @@ def simulate_case(
     agent_response: Optional[str] = None
 
     for user_turn_id in range(1, max_turns + 1):
-        user_text, user_action = next_user_utterance(pattern, state, agent_response, scenario, user_turn_id, persona)
+        user_text, user_action = choose_user_turn(
+            pattern=pattern,
+            state=state,
+            agent_response=agent_response,
+            scenario=scenario,
+            user_turn_id=user_turn_id,
+            persona=persona,
+            turns=turns,
+            policy_client=policy_client,
+        )
         user_text = rewrite_user_utterance(
             text=user_text,
             action=user_action,
@@ -165,7 +221,16 @@ def simulate_case(
         )
         agent_response = agent_step["text"]
         if agent_step["action"] == "answer" and scenario != "difficult_user":
-            final_text, final_action = next_user_utterance(pattern, state, agent_response, scenario, user_turn_id + 1, persona)
+            final_text, final_action = choose_user_turn(
+                pattern=pattern,
+                state=state,
+                agent_response=agent_response,
+                scenario=scenario,
+                user_turn_id=user_turn_id + 1,
+                persona=persona,
+                turns=turns,
+                policy_client=policy_client,
+            )
             final_text = rewrite_user_utterance(
                 text=final_text,
                 action=final_action,
@@ -205,6 +270,227 @@ def simulate_case(
             "used_opening": state["used_opening"],
         },
     }
+
+
+def choose_user_turn(
+    pattern: Dict[str, Any],
+    state: Dict[str, Any],
+    agent_response: Optional[str],
+    scenario: str,
+    user_turn_id: int,
+    persona: Dict[str, Any],
+    turns: List[Dict[str, Any]],
+    policy_client: LocalAIClient,
+) -> tuple[str, str]:
+    state_snapshot = clone_sim_state(state)
+    fallback_text, fallback_action = next_user_utterance(
+        pattern,
+        state,
+        agent_response,
+        scenario,
+        user_turn_id,
+        persona,
+    )
+    fallback_state = clone_sim_state(state)
+    if isinstance(policy_client, MockLocalAIClient):
+        return fallback_text, fallback_action
+    restore_sim_state(state, state_snapshot)
+
+    policy_state = {
+        "slots": [dict(slot) for slot in state["slots"]],
+        "revealed_slots": list(state["revealed_slots"]),
+        "used_opening": state["used_opening"],
+        "solution_seen": state["solution_seen"],
+        "clarification_count": state["clarification_count"],
+        "persona_id": state["persona_id"],
+    }
+    prompt = build_policy_prompt(
+        pattern=pattern,
+        state=policy_state,
+        agent_response=agent_response,
+        scenario=scenario,
+        user_turn_id=user_turn_id,
+        persona=persona,
+        turns=turns,
+    )
+    try:
+        decision = parse_policy_decision(policy_client.generate(prompt))
+    except Exception as exc:
+        print(f"policy failed for {pattern.get('case_id')}: {exc}", flush=True)
+        restore_sim_state(state, fallback_state)
+        return fallback_text, fallback_action
+
+    action = str(decision.get("action") or fallback_action).strip() or fallback_action
+    text = str(decision.get("text") or "").strip()
+    reveal_indices = normalize_reveal_indices(decision.get("reveal_slot_indices"), len(state["slots"]))
+    if not text:
+        text = fallback_text
+    if len(text) > 220:
+        restore_sim_state(state, fallback_state)
+        return fallback_text, fallback_action
+
+    revealed = pop_revealed_slots(state, reveal_indices)
+    if user_turn_id == 1 and not state["used_opening"]:
+        state["used_opening"] = text
+    if looks_like_solution(agent_response or ""):
+        state["solution_seen"] = True
+    if looks_like_clarification(agent_response or ""):
+        state["clarification_count"] += 1
+
+    if revealed and action in {"opening", "ask_more_detail", "no_more_info"}:
+        action = "reveal_slot"
+    return text, action
+
+
+def build_policy_prompt(
+    pattern: Dict[str, Any],
+    state: Dict[str, Any],
+    agent_response: Optional[str],
+    scenario: str,
+    user_turn_id: int,
+    persona: Dict[str, Any],
+    turns: List[Dict[str, Any]],
+) -> str:
+    slots = []
+    for index, slot in enumerate(state["slots"]):
+        slots.append(
+            {
+                "index": index,
+                "slot": slot.get("slot", ""),
+                "ask_label": slot.get("ask_label", ""),
+                "example_user_phrase": slot.get("example_user_phrase", ""),
+            }
+        )
+    payload = {
+        "case_grounding": {
+            "case_id": pattern.get("case_id"),
+            "case_to_question_summary": case_understanding(pattern).get("case_to_question_summary", ""),
+            "user_visible_problem": case_understanding(pattern).get("user_visible_problem", ""),
+            "surface_problem_patterns": str_list(behavior_model(pattern), "surface_problem_patterns")[:5],
+            "opening_question_templates": str_list(simulation_plan(pattern), "opening_question_templates")[:5],
+        },
+        "persona": {
+            "persona_id": persona.get("persona_id"),
+            "name": persona.get("name"),
+            "technical_level": persona.get("technical_level"),
+            "clarity": persona.get("clarity"),
+            "cooperation": persona.get("cooperation"),
+            "patience": persona.get("patience"),
+            "disclosure_style": persona.get("disclosure_style"),
+            "language_style": persona.get("language_style"),
+            "behavior_rules": persona.get("behavior_rules", []),
+        },
+        "dialogue_context": {
+            "scenario": scenario,
+            "user_turn_id": user_turn_id,
+            "last_agent_response": agent_response or "",
+            "recent_turns": compact_turn_history(turns[-6:]),
+            "revealed_slots": state["revealed_slots"],
+            "available_hidden_slots": slots,
+            "solution_seen": state["solution_seen"],
+            "clarification_count": state["clarification_count"],
+        },
+        "strategy_guidance": [
+            "高技术、表达清楚、主动配合的用户可以在开场或早期主动透露多个关键槽位。",
+            "普通合作用户通常先说主要现象，被追问后透露1个或少量槽位。",
+            "模糊、低技术、依赖截图或困难用户应少量透露信息，可能需要多次追问才补充关键事实。",
+            "急躁用户会催促，但仍可能提供对定位有帮助的信息。",
+            "如果客服已经给出明确方案，用户可根据 persona 接受、追问细节或说明试过无效。",
+        ],
+        "output_schema": {
+            "action": "opening | reveal_slot | proactive_followup | ask_more_detail | accept_solution | solution_failed | no_more_info | give_up",
+            "text": "用户本轮自然话语",
+            "reveal_slot_indices": "本轮要透露的 available_hidden_slots index 列表；不透露则为空列表",
+        },
+    }
+    return f"""
+你是企业客服场景中的用户模拟策略器，需要同时决定“用户本轮说什么”和“本轮透露哪些隐藏信息”。
+
+你有策略自主权，但必须受以下硬约束：
+- 只能围绕 case_grounding 中的目标问题，不要换 case。
+- 只能从 available_hidden_slots 选择要透露的隐藏信息，不要编造新的具体事实。
+- reveal_slot_indices 必须是 available_hidden_slots 中存在的 index。
+- text 必须体现 persona 的技术水平、清晰度、配合程度、耐心和语言风格。
+- 不要替客服回答，不要输出电话、邮箱、URL、账号、人员姓名等敏感细节。
+- 只输出 JSON，不要代码块，不要解释。
+
+输入：
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+请输出：
+{{"action": "...", "text": "...", "reveal_slot_indices": [0]}}
+""".strip()
+
+
+def parse_policy_decision(raw_response: str) -> Dict[str, Any]:
+    text = raw_response.strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    left = text.find("{")
+    right = text.rfind("}")
+    if left < 0 or right < left:
+        raise ValueError("policy response is not JSON")
+    data = json.loads(text[left : right + 1])
+    if not isinstance(data, dict):
+        raise ValueError("policy response must be a JSON object")
+    return data
+
+
+def normalize_reveal_indices(value: Any, slot_count: int) -> List[int]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < slot_count and index not in result:
+            result.append(index)
+    return result
+
+
+def pop_revealed_slots(state: Dict[str, Any], reveal_indices: List[int]) -> List[str]:
+    revealed = []
+    for index in sorted(reveal_indices, reverse=True):
+        slot = state["slots"].pop(index)
+        slot_name = str(slot.get("slot") or slot.get("example_user_phrase") or "unknown_slot")
+        state["revealed_slots"].append(slot_name)
+        revealed.append(slot_name)
+    return list(reversed(revealed))
+
+
+def compact_turn_history(turns: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    history = []
+    for turn in turns:
+        history.append(
+            {
+                "role": str(turn.get("role") or ""),
+                "action": str(turn.get("action") or ""),
+                "text": str(turn.get("text") or "")[:180],
+            }
+        )
+    return history
+
+
+def clone_sim_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "slots": [dict(slot) for slot in state["slots"]],
+        "revealed_slots": list(state["revealed_slots"]),
+        "used_opening": state["used_opening"],
+        "solution_seen": state["solution_seen"],
+        "clarification_count": state["clarification_count"],
+        "persona_id": state["persona_id"],
+    }
+
+
+def restore_sim_state(state: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+    state["slots"] = [dict(slot) for slot in snapshot["slots"]]
+    state["revealed_slots"] = list(snapshot["revealed_slots"])
+    state["used_opening"] = snapshot["used_opening"]
+    state["solution_seen"] = snapshot["solution_seen"]
+    state["clarification_count"] = snapshot["clarification_count"]
+    state["persona_id"] = snapshot["persona_id"]
 
 
 def rewrite_user_utterance(
@@ -391,6 +677,16 @@ def next_user_utterance(
     persona_id = str(persona.get("persona_id") or "")
     if user_turn_id == 1:
         opening = choose_opening(pattern, scenario, persona)
+        if persona_id == "high_tech_diagnostic" and state["slots"]:
+            early_phrases = []
+            for _ in range(min(2, len(state["slots"]))):
+                slot = state["slots"].pop(0)
+                state["revealed_slots"].append(str(slot.get("slot") or "unknown_slot"))
+                phrase = str(slot.get("example_user_phrase") or slot.get("slot") or "").strip()
+                if phrase:
+                    early_phrases.append(phrase)
+            if early_phrases:
+                opening = append_suffix_once(opening, "我把信息也补一下：" + "；".join(early_phrases))
         state["used_opening"] = opening
         return opening, "opening"
 
@@ -562,6 +858,10 @@ def apply_persona_style(text: str, persona: Dict[str, Any], action: str) -> str:
     if persona_id == "tried_and_failed":
         if action in {"reveal_slot", "proactive_followup"} and "试过" not in text and len(text) < 55:
             return append_suffix_once(text, "我刚才也试过一次。")
+
+    if persona_id == "high_tech_diagnostic":
+        if action == "opening" and "环境" not in text and len(text) < 80:
+            return append_suffix_once(text, "我可以把环境和复现步骤一起提供。")
 
     return text
 

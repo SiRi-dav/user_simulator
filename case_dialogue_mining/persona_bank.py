@@ -83,6 +83,21 @@ DEFAULT_PERSONAS: List[Dict[str, Any]] = [
         ],
     },
     {
+        "persona_id": "high_tech_diagnostic",
+        "name": "高技术排障用户",
+        "technical_level": "高",
+        "clarity": "很清楚",
+        "cooperation": "主动配合",
+        "patience": "中等",
+        "disclosure_style": "会主动提供环境、版本、错误码、复现步骤和已尝试操作",
+        "language_style": "结构化、直接、偏技术化",
+        "behavior_rules": [
+            "开场倾向于同时说明现象、环境和关键报错",
+            "不需要客服多次追问就会主动补充定位信息",
+            "适合测试客服 AI 对高信息密度用户输入的理解和快速命中能力",
+        ],
+    },
+    {
         "persona_id": "screenshot_dependent",
         "name": "截图依赖用户",
         "technical_level": "中低",
