@@ -25,38 +25,69 @@ class MockLocalAIClient(LocalAIClient):
         hidden = [line.strip() for line in user_lines[1:5] if line.strip()]
         result = {
             "case_id": case_id,
-            "surface_problem_patterns": first_questions[:3],
-            "initial_question_patterns": first_questions[:3],
-            "known_facts": first_questions[:1],
-            "hidden_facts": hidden,
-            "reveal_patterns": ["用户通常先描述表面问题，被追问后补充编号、环境、地点或操作细节。"],
-            "user_style_summary": "用户表达偏口语化，通常不会主动提供完整排障信息。",
-            "common_missing_slots": ["具体系统/页面", "错误码或编号", "操作环境", "期望结果"],
-            "difficulty_observations": ["初始问题信息密度较低，需要客服有效追问。"],
-            "simulation_suggestions": ["先生成简短开场，再根据客服追问逐步透露隐藏事实。"],
-            "observed_from_dialogue": first_questions[:2],
-            "inferred_from_case": [str(case.get("title") or "").strip()],
-            "uncertain_points": ["样例 mock 不判断真实不确定性。"],
-            "case_to_question_summary": "从案例标题和历史用户开场中提炼表面问题，再按追问逐步补充槽位。",
-            "opening_question_templates": first_questions[:3],
-            "slot_reveal_plan": [
-                {
-                    "slot": "错误码或环境",
-                    "when_to_reveal": "客服追问具体报错或使用环境后",
-                    "example_user_phrase": "我这边提示了一个错误，截图里有。",
-                    "source": "dialogue",
-                }
-            ],
-            "simulator_actions": [
-                {
-                    "turn_stage": "opening",
-                    "user_intent": "报告表面问题",
-                    "behavior": "只说现象，不主动给完整排障信息",
-                    "example": first_questions[0] if first_questions else "这个功能用不了，帮我看下。",
-                    "depends_on_agent": "无",
-                }
-            ],
-            "evaluation_focus": ["客服是否能追问缺失槽位", "客服是否能把用户现象映射到正确 case"],
+            "case_understanding": {
+                "target_case_id": case_id,
+                "user_visible_problem": first_questions[0] if first_questions else str(case.get("title") or ""),
+                "likely_user_goal": "希望客服定位并解决当前问题",
+                "required_slots": ["具体系统/页面", "错误码或编号", "操作环境", "期望结果"],
+                "case_to_question_summary": "从案例标题和历史用户开场中提炼表面问题，再按追问逐步补充槽位。",
+                "evidence_from_case": [str(case.get("title") or "").strip()],
+            },
+            "behavior_model": {
+                "dialogue_level_patterns": [
+                    {
+                        "dialogue_id": "mock_dialogue_1",
+                        "surface_problem": first_questions[0] if first_questions else "这个功能用不了",
+                        "initial_question": first_questions[0] if first_questions else "这个功能用不了，帮我看下。",
+                        "known_facts": first_questions[:1],
+                        "hidden_facts": hidden,
+                        "missing_slots": ["具体系统/页面", "错误码或编号", "操作环境", "期望结果"],
+                        "reveal_path": [
+                            {
+                                "condition": "客服追问具体报错或使用环境后",
+                                "reveal": "补充编号、环境、地点或操作细节",
+                                "example_user_phrase": "我这边提示了一个错误，截图里有。",
+                            }
+                        ],
+                        "expression_style": "口语化，初始信息不完整",
+                        "evidence": first_questions[:2],
+                    }
+                ],
+                "surface_problem_patterns": first_questions[:3],
+                "initial_question_patterns": first_questions[:3],
+                "known_facts": first_questions[:1],
+                "hidden_facts": hidden,
+                "reveal_patterns": ["用户通常先描述表面问题，被追问后补充编号、环境、地点或操作细节。"],
+                "expression_style_patterns": ["用户表达偏口语化", "通常不会主动提供完整排障信息"],
+                "common_missing_slots": ["具体系统/页面", "错误码或编号", "操作环境", "期望结果"],
+                "difficulty_observations": ["初始问题信息密度较低，需要客服有效追问。"],
+                "observed_from_dialogue": first_questions[:2],
+                "inferred_from_case": [str(case.get("title") or "").strip()],
+                "uncertain_points": ["样例 mock 不判断真实不确定性。"],
+            },
+            "simulation_plan": {
+                "opening_question_templates": first_questions[:3],
+                "slot_reveal_plan": [
+                    {
+                        "slot": "错误码或环境",
+                        "when_to_reveal": "客服追问具体报错或使用环境后",
+                        "example_user_phrase": "我这边提示了一个错误，截图里有。",
+                        "source": "dialogue",
+                    }
+                ],
+                "simulator_actions": [
+                    {
+                        "turn_stage": "opening",
+                        "user_intent": "报告表面问题",
+                        "behavior": "只说现象，不主动给完整排障信息",
+                        "example": first_questions[0] if first_questions else "这个功能用不了，帮我看下。",
+                        "depends_on_agent": "无",
+                    }
+                ],
+                "simulation_suggestions": ["先生成简短开场，再根据客服追问逐步透露隐藏事实。"],
+                "evaluation_focus": ["客服是否能追问缺失槽位", "客服是否能把用户现象映射到正确 case"],
+                "stop_conditions": ["客服命中目标 case 或用户接受解决方案"],
+            },
         }
         return json.dumps(result, ensure_ascii=False)
 

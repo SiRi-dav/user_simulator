@@ -101,26 +101,16 @@ def pattern_from_dict(record: Dict[str, Any]) -> CaseQuestionPattern:
 def parse_pattern(case_id: str, raw_response: str) -> CaseQuestionPattern:
     try:
         obj = json.loads(extract_json_object(raw_response))
+        case_understanding = _as_dict(obj.get("case_understanding"))
+        behavior_model = _as_dict(obj.get("behavior_model"))
+        simulation_plan = _as_dict(obj.get("simulation_plan"))
+        if not case_understanding or not behavior_model or not simulation_plan:
+            raise ValueError("missing required schema blocks: case_understanding, behavior_model, simulation_plan")
         return CaseQuestionPattern(
             case_id=str(obj.get("case_id") or case_id),
-            dialogue_level_patterns=_as_dict_list(obj.get("dialogue_level_patterns")),
-            surface_problem_patterns=_as_str_list(obj.get("surface_problem_patterns")),
-            initial_question_patterns=_as_str_list(obj.get("initial_question_patterns")),
-            known_facts=_as_str_list(obj.get("known_facts")),
-            hidden_facts=_as_str_list(obj.get("hidden_facts")),
-            reveal_patterns=_as_str_list(obj.get("reveal_patterns")),
-            user_style_summary=str(obj.get("user_style_summary") or ""),
-            common_missing_slots=_as_str_list(obj.get("common_missing_slots")),
-            difficulty_observations=_as_str_list(obj.get("difficulty_observations")),
-            simulation_suggestions=_as_str_list(obj.get("simulation_suggestions")),
-            observed_from_dialogue=_as_str_list(obj.get("observed_from_dialogue")),
-            inferred_from_case=_as_str_list(obj.get("inferred_from_case")),
-            uncertain_points=_as_str_list(obj.get("uncertain_points")),
-            case_to_question_summary=str(obj.get("case_to_question_summary") or ""),
-            opening_question_templates=_as_str_list(obj.get("opening_question_templates")),
-            slot_reveal_plan=_as_dict_list(obj.get("slot_reveal_plan")),
-            simulator_actions=_as_dict_list(obj.get("simulator_actions")),
-            evaluation_focus=_as_str_list(obj.get("evaluation_focus")),
+            case_understanding=case_understanding,
+            behavior_model=behavior_model,
+            simulation_plan=simulation_plan,
             raw_ai_response=raw_response,
         )
     except Exception as exc:
@@ -152,3 +142,9 @@ def _as_dict_list(value: Any) -> List[Dict[str, Any]]:
         if isinstance(item, dict):
             items.append({str(key): val for key, val in item.items()})
     return items
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): val for key, val in value.items()}

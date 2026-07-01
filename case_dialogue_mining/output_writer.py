@@ -70,15 +70,20 @@ def build_summary_report(
         if pattern.parse_error:
             lines.append(f"- {pattern.case_id}: analysis failed ({pattern.parse_error})")
             continue
-        initial = compact_list(pattern.initial_question_patterns, 2)
-        missing = compact_list(pattern.common_missing_slots, 2)
-        style = pattern.user_style_summary or "N/A"
+        behavior = pattern.behavior_model
+        plan = pattern.simulation_plan
+        understanding = pattern.case_understanding
+        initial = compact_list(get_str_list(behavior, "initial_question_patterns"), 2)
+        missing = compact_list(get_str_list(behavior, "common_missing_slots"), 2)
+        style = compact_list(get_str_list(behavior, "expression_style_patterns"), 2)
         lines.append(f"### {pattern.case_id}")
-        if pattern.case_to_question_summary:
-            lines.append(f"- case to question: {pattern.case_to_question_summary}")
+        if understanding.get("case_to_question_summary"):
+            lines.append(f"- case to question: {understanding.get('case_to_question_summary')}")
         lines.append(f"- initial patterns: {initial}")
         lines.append(f"- missing slots: {missing}")
-        lines.append(f"- user style: {style}")
+        lines.append(f"- expression style: {style}")
+        focus = compact_list(get_str_list(plan, "evaluation_focus"), 2)
+        lines.append(f"- evaluation focus: {focus}")
         lines.append("")
     lines.append("")
     return "\n".join(lines)
@@ -98,30 +103,10 @@ def build_readable_patterns_report(patterns: List[CaseQuestionPattern]) -> str:
             lines.append("")
             continue
 
-        add_dialogue_level_section(lines, pattern.dialogue_level_patterns)
-        add_section(lines, "Surface Problem Patterns", pattern.surface_problem_patterns)
-        add_section(lines, "Initial Question Patterns", pattern.initial_question_patterns)
-        add_section(lines, "Known Facts", pattern.known_facts)
-        add_section(lines, "Hidden Facts", pattern.hidden_facts)
-        add_section(lines, "Reveal Patterns", pattern.reveal_patterns)
-        add_section(lines, "Observed From Dialogue", pattern.observed_from_dialogue)
-        add_section(lines, "Inferred From Case", pattern.inferred_from_case)
-        add_section(lines, "Uncertain Points", pattern.uncertain_points)
-        add_section(lines, "Common Missing Slots", pattern.common_missing_slots)
-        add_section(lines, "Opening Question Templates", pattern.opening_question_templates)
-        add_dict_section(lines, "Slot Reveal Plan", pattern.slot_reveal_plan)
-        add_dict_section(lines, "Simulator Actions", pattern.simulator_actions)
-        add_section(lines, "Difficulty Observations", pattern.difficulty_observations)
-        add_section(lines, "Simulation Suggestions", pattern.simulation_suggestions)
-        add_section(lines, "Evaluation Focus", pattern.evaluation_focus)
-        if pattern.case_to_question_summary:
-            lines.append("### Case To Question Summary")
-            lines.append(pattern.case_to_question_summary)
-            lines.append("")
-        if pattern.user_style_summary:
-            lines.append("### User Style Summary")
-            lines.append(pattern.user_style_summary)
-            lines.append("")
+        add_dict_overview(lines, "Case Understanding", pattern.case_understanding)
+        add_dialogue_level_section(lines, get_dict_list(pattern.behavior_model, "dialogue_level_patterns"))
+        add_dict_overview(lines, "Behavior Model", pattern.behavior_model, skip_keys={"dialogue_level_patterns"})
+        add_dict_overview(lines, "Simulation Plan", pattern.simulation_plan)
     return "\n".join(lines)
 
 
@@ -144,6 +129,27 @@ def add_dict_section(lines: List[str], title: str, values: List[Dict]) -> None:
     lines.append("")
 
 
+def add_dict_overview(lines: List[str], title: str, value: Dict, skip_keys: set[str] | None = None) -> None:
+    if not value:
+        return
+    skip_keys = skip_keys or set()
+    lines.append(f"### {title}")
+    for key, item in value.items():
+        if key in skip_keys or item in (None, "", []):
+            continue
+        if isinstance(item, list):
+            compact = "；".join(str(part) for part in item[:6])
+            if len(item) > 6:
+                compact += "；..."
+            lines.append(f"- {key}: {compact}")
+        elif isinstance(item, dict):
+            compact = "；".join(f"{sub_key}: {sub_value}" for sub_key, sub_value in item.items() if sub_value)
+            lines.append(f"- {key}: {compact}")
+        else:
+            lines.append(f"- {key}: {item}")
+    lines.append("")
+
+
 def add_dialogue_level_section(lines: List[str], values: List[Dict]) -> None:
     if not values:
         return
@@ -154,7 +160,7 @@ def add_dialogue_level_section(lines: List[str], values: List[Dict]) -> None:
         scalar_fields = [
             ("surface_problem", "surface_problem"),
             ("initial_question", "initial_question"),
-            ("user_style", "user_style"),
+            ("expression_style", "expression_style"),
         ]
         for key, label in scalar_fields:
             item = value.get(key)
@@ -170,7 +176,7 @@ def add_dialogue_level_section(lines: List[str], values: List[Dict]) -> None:
         for key, label in list_fields:
             items = value.get(key)
             if isinstance(items, list) and items:
-                lines.append(f"- {label}: {'；'.join(str(item) for item in items)}")
+                lines.append(f"- {label}: {format_list_items(items)}")
         lines.append("")
 
 
@@ -178,3 +184,31 @@ def compact_list(values: List[str], limit: int) -> str:
     if not values:
         return "N/A"
     return "；".join(values[:limit])
+
+
+def get_str_list(record: Dict, key: str) -> List[str]:
+    value = record.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def get_dict_list(record: Dict, key: str) -> List[Dict]:
+    value = record.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def format_list_items(items: List) -> str:
+    parts = []
+    for item in items:
+        if isinstance(item, dict):
+            condition = item.get("condition")
+            reveal = item.get("reveal")
+            phrase = item.get("example_user_phrase")
+            compact = " / ".join(str(part) for part in (condition, reveal, phrase) if part)
+            parts.append(compact or str(item))
+        else:
+            parts.append(str(item))
+    return "；".join(parts)

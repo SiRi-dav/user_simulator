@@ -47,24 +47,9 @@ class MiningStats:
 @dataclass
 class CaseQuestionPattern:
     case_id: str
-    dialogue_level_patterns: List[Dict[str, Any]] = field(default_factory=list)
-    surface_problem_patterns: List[str] = field(default_factory=list)
-    initial_question_patterns: List[str] = field(default_factory=list)
-    known_facts: List[str] = field(default_factory=list)
-    hidden_facts: List[str] = field(default_factory=list)
-    reveal_patterns: List[str] = field(default_factory=list)
-    user_style_summary: str = ""
-    common_missing_slots: List[str] = field(default_factory=list)
-    difficulty_observations: List[str] = field(default_factory=list)
-    simulation_suggestions: List[str] = field(default_factory=list)
-    observed_from_dialogue: List[str] = field(default_factory=list)
-    inferred_from_case: List[str] = field(default_factory=list)
-    uncertain_points: List[str] = field(default_factory=list)
-    case_to_question_summary: str = ""
-    opening_question_templates: List[str] = field(default_factory=list)
-    slot_reveal_plan: List[Dict[str, Any]] = field(default_factory=list)
-    simulator_actions: List[Dict[str, Any]] = field(default_factory=list)
-    evaluation_focus: List[str] = field(default_factory=list)
+    case_understanding: Dict[str, Any] = field(default_factory=dict)
+    behavior_model: Dict[str, Any] = field(default_factory=dict)
+    simulation_plan: Dict[str, Any] = field(default_factory=dict)
     raw_ai_response: str = ""
     parse_error: Optional[str] = None
 

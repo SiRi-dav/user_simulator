@@ -185,15 +185,15 @@ def simulate_case(
     return {
         "case_id": pattern.get("case_id"),
         "scenario": scenario,
-        "mode": scenario,
         "persona": {
             "persona_id": persona.get("persona_id"),
             "name": persona.get("name"),
             "summary": persona_summary(persona),
             "behavior_rules": persona.get("behavior_rules", []),
         },
-        "case_to_question_summary": pattern.get("case_to_question_summary", ""),
-        "evaluation_focus": pattern.get("evaluation_focus", []),
+        "case_understanding": pattern.get("case_understanding", {}),
+        "behavior_model_summary": compact_behavior_model(pattern),
+        "simulation_plan_summary": compact_simulation_plan(pattern),
         "turns": turns,
         "final_state": {
             "revealed_slots": state["revealed_slots"],
@@ -239,10 +239,10 @@ def build_rewrite_prompt(
     payload = {
         "case_grounding_line": {
             "case_id": pattern.get("case_id"),
-            "case_to_question_summary": pattern.get("case_to_question_summary", ""),
-            "surface_problem_patterns": pattern.get("surface_problem_patterns", [])[:5],
-            "opening_examples": pattern.get("initial_question_patterns", [])[:3],
-            "evaluation_focus": pattern.get("evaluation_focus", [])[:5],
+            "case_to_question_summary": case_understanding(pattern).get("case_to_question_summary", ""),
+            "surface_problem_patterns": str_list(behavior_model(pattern), "surface_problem_patterns")[:5],
+            "opening_examples": str_list(behavior_model(pattern), "initial_question_patterns")[:3],
+            "evaluation_focus": str_list(simulation_plan(pattern), "evaluation_focus")[:5],
         },
         "persona_behavior_line": {
             "scenario": scenario,
@@ -255,7 +255,7 @@ def build_rewrite_prompt(
             "disclosure_style": persona.get("disclosure_style"),
             "language_style": persona.get("language_style"),
             "behavior_rules": persona.get("behavior_rules", []),
-            "dialogue_observed_user_style": pattern.get("user_style_summary", ""),
+            "dialogue_observed_expression_style": str_list(behavior_model(pattern), "expression_style_patterns"),
         },
         "current_turn": {
             "user_action": action,
@@ -296,6 +296,53 @@ def strip_wrapping_quotes(text: str) -> str:
     if text.startswith("{") and text.endswith("}"):
         return ""
     return text.strip('"“”')
+
+
+def case_understanding(pattern: Dict[str, Any]) -> Dict[str, Any]:
+    value = pattern.get("case_understanding")
+    return value if isinstance(value, dict) else {}
+
+
+def behavior_model(pattern: Dict[str, Any]) -> Dict[str, Any]:
+    value = pattern.get("behavior_model")
+    return value if isinstance(value, dict) else {}
+
+
+def simulation_plan(pattern: Dict[str, Any]) -> Dict[str, Any]:
+    value = pattern.get("simulation_plan")
+    return value if isinstance(value, dict) else {}
+
+
+def str_list(record: Dict[str, Any], key: str) -> List[str]:
+    value = record.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def dict_list(record: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    value = record.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def compact_behavior_model(pattern: Dict[str, Any]) -> Dict[str, Any]:
+    behavior = behavior_model(pattern)
+    return {
+        "surface_problem_patterns": str_list(behavior, "surface_problem_patterns")[:5],
+        "initial_question_patterns": str_list(behavior, "initial_question_patterns")[:5],
+        "common_missing_slots": str_list(behavior, "common_missing_slots")[:8],
+        "expression_style_patterns": str_list(behavior, "expression_style_patterns")[:5],
+    }
+
+
+def compact_simulation_plan(pattern: Dict[str, Any]) -> Dict[str, Any]:
+    plan = simulation_plan(pattern)
+    return {
+        "opening_question_templates": str_list(plan, "opening_question_templates")[:5],
+        "evaluation_focus": str_list(plan, "evaluation_focus")[:8],
+    }
 
 
 def build_initial_state(pattern: Dict[str, Any], scenario: str, persona: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,8 +424,10 @@ def next_user_utterance(
 
 
 def choose_opening(pattern: Dict[str, Any], scenario: str, persona: Dict[str, Any]) -> str:
-    openings = clean_list(pattern.get("opening_question_templates")) or clean_list(pattern.get("initial_question_patterns"))
-    surfaces = clean_list(pattern.get("surface_problem_patterns"))
+    openings = str_list(simulation_plan(pattern), "opening_question_templates") or str_list(
+        behavior_model(pattern), "initial_question_patterns"
+    )
+    surfaces = str_list(behavior_model(pattern), "surface_problem_patterns")
     persona_id = str(persona.get("persona_id") or "")
     if scenario == "vague_user" or persona_id == "vague_low_context":
         if surfaces:
@@ -398,7 +447,7 @@ def choose_opening(pattern: Dict[str, Any], scenario: str, persona: Dict[str, An
 
 def normalize_slots(pattern: Dict[str, Any]) -> List[Dict[str, str]]:
     slots: List[Dict[str, str]] = []
-    for item in pattern.get("slot_reveal_plan") or []:
+    for item in dict_list(simulation_plan(pattern), "slot_reveal_plan"):
         if isinstance(item, dict):
             slot_name = str(item.get("slot") or "").strip()
             phrase = str(item.get("example_user_phrase") or "").strip()
@@ -410,9 +459,9 @@ def normalize_slots(pattern: Dict[str, Any]) -> List[Dict[str, str]]:
                         "example_user_phrase": phrase,
                     }
                 )
-    for value in clean_list(pattern.get("hidden_facts")):
+    for value in str_list(behavior_model(pattern), "hidden_facts"):
         slots.append({"slot": value, "ask_label": "相关细节", "example_user_phrase": hidden_fact_to_user_phrase(value)})
-    for value in clean_list(pattern.get("common_missing_slots")):
+    for value in str_list(behavior_model(pattern), "common_missing_slots"):
         slots.append(
             {
                 "slot": value,
@@ -575,6 +624,8 @@ def build_readable_report(results: List[Dict[str, Any]]) -> str:
         scenario = result.get("scenario") or result.get("mode") or "unknown"
         lines.append(f"## {index}. {case_id} ({scenario})")
         summary = result.get("case_to_question_summary")
+        if not summary:
+            summary = (result.get("case_understanding") or {}).get("case_to_question_summary")
         if summary:
             lines.append(f"- case to question: {summary}")
         persona = result.get("persona") or {}
@@ -582,7 +633,7 @@ def build_readable_report(results: List[Dict[str, Any]]) -> str:
             lines.append(f"- persona: {persona.get('name') or persona.get('persona_id')} ({persona.get('persona_id')})")
             if persona.get("summary"):
                 lines.append(f"- persona summary: {persona.get('summary')}")
-        focus = result.get("evaluation_focus") or []
+        focus = (result.get("simulation_plan_summary") or {}).get("evaluation_focus") or []
         if focus:
             lines.append(f"- evaluation focus: {'；'.join(str(item) for item in focus[:3])}")
         lines.append("")

@@ -21,14 +21,11 @@ Outputs:
 - `outputs/summary_report.md`
 - `outputs/question_patterns.readable.md`
 
-The upgraded analysis separates:
+The upgraded analysis writes a three-block schema:
 
-- `observed_from_dialogue`: behavior or facts supported by real conversations
-- `inferred_from_case`: likely user-side facts inferred from the case answer
-- `uncertain_points`: assumptions that need more data
-- `slot_reveal_plan`: when hidden slots should be revealed in a later simulator
-- `simulator_actions`: reusable user behavior actions by turn stage
-- `evaluation_focus`: what the客服 AI should be tested on for this case
+- `case_understanding`: target case, user-visible problem, likely user goal, required slots, and case-side evidence
+- `behavior_model`: user question patterns, known/hidden facts, missing slots, reveal rhythm, and user style
+- `simulation_plan`: opening templates, slot reveal plan, simulator actions, stop conditions, and evaluation focus
 
 ## Input Contract
 
@@ -168,12 +165,12 @@ Outputs:
 - `outputs_case_only/question_patterns.case_only.readable.md`
 - `outputs_case_only/analysis_errors.case_only.jsonl`
 
-The case-only prompt still outputs the same schema as `question_patterns.jsonl`, but:
+The case-only prompt outputs the same three-block schema as `question_patterns.jsonl`, but:
 
-- `observed_from_dialogue` is empty;
-- `inferred_from_case` contains the main reasoning basis;
-- `dialogue_level_patterns` contains synthetic seeds such as `synthetic_1`, `synthetic_2`, `synthetic_3`;
-- `slot_reveal_plan.source` uses `case` or `inferred`, not `dialogue`.
+- `behavior_model.observed_from_dialogue` is empty;
+- `behavior_model.inferred_from_case` contains the main reasoning basis;
+- `behavior_model.dialogue_level_patterns` contains synthetic seeds such as `synthetic_1`, `synthetic_2`, `synthetic_3`;
+- `simulation_plan.slot_reveal_plan[].source` uses `case` or `inferred`, not `dialogue`.
 
 ## Lightweight Simulator MVP
 

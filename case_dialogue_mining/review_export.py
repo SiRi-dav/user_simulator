@@ -84,32 +84,12 @@ def build_markdown(records: List[Dict[str, Any]]) -> str:
     lines = ["# Question Pattern Review", ""]
     for index, record in enumerate(records, start=1):
         lines.append(f"## {index}. {record.get('case_id', 'UNKNOWN')}")
-        append_dialogue_level_patterns(lines, record.get("dialogue_level_patterns", []))
-        append_list(lines, "Initial Question Patterns", record.get("initial_question_patterns", []))
-        append_list(lines, "Surface Problem Patterns", record.get("surface_problem_patterns", []))
-        append_list(lines, "Known Facts", record.get("known_facts", []))
-        append_list(lines, "Hidden Facts", record.get("hidden_facts", []))
-        append_list(lines, "Reveal Patterns", record.get("reveal_patterns", []))
-        append_list(lines, "Observed From Dialogue", record.get("observed_from_dialogue", []))
-        append_list(lines, "Inferred From Case", record.get("inferred_from_case", []))
-        append_list(lines, "Uncertain Points", record.get("uncertain_points", []))
-        append_list(lines, "Common Missing Slots", record.get("common_missing_slots", []))
-        append_list(lines, "Opening Question Templates", record.get("opening_question_templates", []))
-        append_dict_list(lines, "Slot Reveal Plan", record.get("slot_reveal_plan", []))
-        append_dict_list(lines, "Simulator Actions", record.get("simulator_actions", []))
-        append_list(lines, "Difficulty Observations", record.get("difficulty_observations", []))
-        append_list(lines, "Simulation Suggestions", record.get("simulation_suggestions", []))
-        append_list(lines, "Evaluation Focus", record.get("evaluation_focus", []))
-        summary = record.get("case_to_question_summary")
-        if summary:
-            lines.append("### Case To Question Summary")
-            lines.append(str(summary))
-            lines.append("")
-        style = record.get("user_style_summary")
-        if style:
-            lines.append("### User Style Summary")
-            lines.append(str(style))
-            lines.append("")
+        append_dict_overview(lines, "Case Understanding", record.get("case_understanding", {}))
+        behavior = record.get("behavior_model", {})
+        if isinstance(behavior, dict):
+            append_dialogue_level_patterns(lines, behavior.get("dialogue_level_patterns", []))
+        append_dict_overview(lines, "Behavior Model", behavior, skip_keys={"dialogue_level_patterns"})
+        append_dict_overview(lines, "Simulation Plan", record.get("simulation_plan", {}))
     return "\n".join(lines)
 
 
@@ -134,6 +114,32 @@ def append_dict_list(lines: List[str], title: str, values: List[Dict[str, Any]])
     lines.append("")
 
 
+def append_dict_overview(
+    lines: List[str],
+    title: str,
+    value: Dict[str, Any],
+    skip_keys: set[str] | None = None,
+) -> None:
+    if not isinstance(value, dict) or not value:
+        return
+    skip_keys = skip_keys or set()
+    lines.append(f"### {title}")
+    for key, item in value.items():
+        if key in skip_keys or item in (None, "", []):
+            continue
+        if isinstance(item, list):
+            compact = "；".join(str(part) for part in item[:6])
+            if len(item) > 6:
+                compact += "；..."
+            lines.append(f"- {key}: {compact}")
+        elif isinstance(item, dict):
+            compact = "；".join(f"{sub_key}: {sub_value}" for sub_key, sub_value in item.items() if sub_value)
+            lines.append(f"- {key}: {compact}")
+        else:
+            lines.append(f"- {key}: {item}")
+    lines.append("")
+
+
 def append_dialogue_level_patterns(lines: List[str], values: List[Dict[str, Any]]) -> None:
     if not values:
         return
@@ -143,15 +149,29 @@ def append_dialogue_level_patterns(lines: List[str], values: List[Dict[str, Any]
             continue
         dialogue_id = value.get("dialogue_id") or f"dialogue_{index}"
         lines.append(f"#### {index}. {dialogue_id}")
-        for key in ("surface_problem", "initial_question", "user_style"):
+        for key in ("surface_problem", "initial_question", "expression_style"):
             item = value.get(key)
             if item:
                 lines.append(f"- {key}: {item}")
         for key in ("known_facts", "hidden_facts", "missing_slots", "reveal_path", "evidence"):
             items = value.get(key)
             if isinstance(items, list) and items:
-                lines.append(f"- {key}: {'；'.join(str(item) for item in items)}")
+                lines.append(f"- {key}: {format_list_items(items)}")
         lines.append("")
+
+
+def format_list_items(items: List[Any]) -> str:
+    parts = []
+    for item in items:
+        if isinstance(item, dict):
+            condition = item.get("condition")
+            reveal = item.get("reveal")
+            phrase = item.get("example_user_phrase")
+            compact = " / ".join(str(part) for part in (condition, reveal, phrase) if part)
+            parts.append(compact or str(item))
+        else:
+            parts.append(str(item))
+    return "；".join(parts)
 
 
 if __name__ == "__main__":

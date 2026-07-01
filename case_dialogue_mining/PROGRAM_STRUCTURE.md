@@ -478,16 +478,12 @@ dialogue.case_id == case.case_id
 
 - `dialogue_level_patterns`
   - 每条真实历史对话各自的提问结果
-  - 包括 surface_problem、initial_question、known_facts、hidden_facts、missing_slots、reveal_path
-- `surface_problem_patterns`
-- `initial_question_patterns`
-- `observed_from_dialogue`
-- `inferred_from_case`
-- `slot_reveal_plan`
-- `simulator_actions`
-- `evaluation_focus`
+  - 包括 surface_problem、initial_question、known_facts、hidden_facts、missing_slots、reveal_path、expression_style
+- `case_understanding`
+- `behavior_model`
+- `simulation_plan`
 
-如果想让 LLM 多抽 persona、难度、用户情绪、行业场景，主要改这里。
+这里不抽 persona。persona 由 `persona_bank.py` 单独控制；prompt 只抽该 case 下的提问方式和表达规律。
 
 当前包含两个核心 prompt：
 
@@ -657,3 +653,56 @@ real_agent_client.py
 - `simulate_from_patterns.py`
 - `persona_bank.py`
 - `config.yaml`
+
+## 十三、Question Pattern Schema 设计
+
+当前 `question_patterns.jsonl` 只保留三层主结构，不再输出旧版顶层兼容字段。
+
+```text
+case_understanding
+behavior_model
+simulation_plan
+```
+
+### `case_understanding`
+
+回答“目标 case 是什么，用户真正想解决什么”。这一层来自案例库本身，对应传统任务型对话里的 user goal / target task。
+
+主要字段：
+
+- `target_case_id`
+- `user_visible_problem`
+- `likely_user_goal`
+- `required_slots`
+- `case_to_question_summary`
+- `evidence_from_case`
+
+### `behavior_model`
+
+回答“用户会怎么问、知道什么、隐藏什么、怎样逐步透露”。这一层从历史对话学习；case-only 场景下则由 case 推断。
+
+主要字段：
+
+- `dialogue_level_patterns`
+- `surface_problem_patterns`
+- `initial_question_patterns`
+- `known_facts`
+- `hidden_facts`
+- `reveal_patterns`
+- `expression_style_patterns`
+- `common_missing_slots`
+
+### `simulation_plan`
+
+回答“模拟器实际怎么跑”。这一层直接服务后续用户模拟。
+
+主要字段：
+
+- `opening_question_templates`
+- `slot_reveal_plan`
+- `simulator_actions`
+- `simulation_suggestions`
+- `evaluation_focus`
+- `stop_conditions`
+
+后续分析、review 和模拟器都直接读取这三层结构。
