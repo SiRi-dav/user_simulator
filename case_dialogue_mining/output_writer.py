@@ -98,6 +98,7 @@ def build_readable_patterns_report(patterns: List[CaseQuestionPattern]) -> str:
             lines.append("")
             continue
 
+        add_dialogue_level_section(lines, pattern.dialogue_level_patterns)
         add_section(lines, "Surface Problem Patterns", pattern.surface_problem_patterns)
         add_section(lines, "Initial Question Patterns", pattern.initial_question_patterns)
         add_section(lines, "Known Facts", pattern.known_facts)
@@ -141,6 +142,36 @@ def add_dict_section(lines: List[str], title: str, values: List[Dict]) -> None:
         parts = [f"{key}: {item}" for key, item in value.items() if item not in (None, "")]
         lines.append(f"- {'; '.join(parts)}")
     lines.append("")
+
+
+def add_dialogue_level_section(lines: List[str], values: List[Dict]) -> None:
+    if not values:
+        return
+    lines.append("### Dialogue Level Patterns")
+    for index, value in enumerate(values, start=1):
+        dialogue_id = value.get("dialogue_id") or f"dialogue_{index}"
+        lines.append(f"#### {index}. {dialogue_id}")
+        scalar_fields = [
+            ("surface_problem", "surface_problem"),
+            ("initial_question", "initial_question"),
+            ("user_style", "user_style"),
+        ]
+        for key, label in scalar_fields:
+            item = value.get(key)
+            if item:
+                lines.append(f"- {label}: {item}")
+        list_fields = [
+            ("known_facts", "known_facts"),
+            ("hidden_facts", "hidden_facts"),
+            ("missing_slots", "missing_slots"),
+            ("reveal_path", "reveal_path"),
+            ("evidence", "evidence"),
+        ]
+        for key, label in list_fields:
+            items = value.get(key)
+            if isinstance(items, list) and items:
+                lines.append(f"- {label}: {'；'.join(str(item) for item in items)}")
+        lines.append("")
 
 
 def compact_list(values: List[str], limit: int) -> str:

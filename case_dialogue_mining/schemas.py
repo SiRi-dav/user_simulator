@@ -47,6 +47,7 @@ class MiningStats:
 @dataclass
 class CaseQuestionPattern:
     case_id: str
+    dialogue_level_patterns: List[Dict[str, Any]] = field(default_factory=list)
     surface_problem_patterns: List[str] = field(default_factory=list)
     initial_question_patterns: List[str] = field(default_factory=list)
     known_facts: List[str] = field(default_factory=list)

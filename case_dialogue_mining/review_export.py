@@ -84,6 +84,7 @@ def build_markdown(records: List[Dict[str, Any]]) -> str:
     lines = ["# Question Pattern Review", ""]
     for index, record in enumerate(records, start=1):
         lines.append(f"## {index}. {record.get('case_id', 'UNKNOWN')}")
+        append_dialogue_level_patterns(lines, record.get("dialogue_level_patterns", []))
         append_list(lines, "Initial Question Patterns", record.get("initial_question_patterns", []))
         append_list(lines, "Surface Problem Patterns", record.get("surface_problem_patterns", []))
         append_list(lines, "Known Facts", record.get("known_facts", []))
@@ -131,6 +132,26 @@ def append_dict_list(lines: List[str], title: str, values: List[Dict[str, Any]])
         parts = [f"{key}: {item}" for key, item in value.items() if item not in (None, "")]
         lines.append(f"- {'; '.join(parts)}")
     lines.append("")
+
+
+def append_dialogue_level_patterns(lines: List[str], values: List[Dict[str, Any]]) -> None:
+    if not values:
+        return
+    lines.append("### Dialogue Level Patterns")
+    for index, value in enumerate(values, start=1):
+        if not isinstance(value, dict):
+            continue
+        dialogue_id = value.get("dialogue_id") or f"dialogue_{index}"
+        lines.append(f"#### {index}. {dialogue_id}")
+        for key in ("surface_problem", "initial_question", "user_style"):
+            item = value.get(key)
+            if item:
+                lines.append(f"- {key}: {item}")
+        for key in ("known_facts", "hidden_facts", "missing_slots", "reveal_path", "evidence"):
+            items = value.get(key)
+            if isinstance(items, list) and items:
+                lines.append(f"- {key}: {'；'.join(str(item) for item in items)}")
+        lines.append("")
 
 
 if __name__ == "__main__":

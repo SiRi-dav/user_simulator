@@ -4,6 +4,8 @@ This tool mines case-dialogue pairs and asks a local AI model to summarize how r
 
 The first-stage goal is data mining and analysis, not user simulation runtime.
 
+For a file-by-file code map, see [`PROGRAM_STRUCTURE.md`](PROGRAM_STRUCTURE.md).
+
 ## Run With Sample Data
 
 ```bash
@@ -147,6 +149,31 @@ This writes:
 
 - `outputs/question_patterns.review.md`
 - `outputs/question_patterns.review.masked.jsonl`
+
+## Case-Only Analysis
+
+The long-term simulator should also work for a new case without dialogue history. For that, run case-only analysis:
+
+```bash
+python analyze_cases_only.py \
+  --config config.yaml \
+  --max-cases 20
+```
+
+This only reads the case library and asks the local model to infer likely user-side patterns from the case title, phenomenon, and solution.
+
+Outputs:
+
+- `outputs_case_only/question_patterns.case_only.jsonl`
+- `outputs_case_only/question_patterns.case_only.readable.md`
+- `outputs_case_only/analysis_errors.case_only.jsonl`
+
+The case-only prompt still outputs the same schema as `question_patterns.jsonl`, but:
+
+- `observed_from_dialogue` is empty;
+- `inferred_from_case` contains the main reasoning basis;
+- `dialogue_level_patterns` contains synthetic seeds such as `synthetic_1`, `synthetic_2`, `synthetic_3`;
+- `slot_reveal_plan.source` uses `case` or `inferred`, not `dialogue`.
 
 ## Lightweight Simulator MVP
 

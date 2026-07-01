@@ -103,6 +103,7 @@ def parse_pattern(case_id: str, raw_response: str) -> CaseQuestionPattern:
         obj = json.loads(extract_json_object(raw_response))
         return CaseQuestionPattern(
             case_id=str(obj.get("case_id") or case_id),
+            dialogue_level_patterns=_as_dict_list(obj.get("dialogue_level_patterns")),
             surface_problem_patterns=_as_str_list(obj.get("surface_problem_patterns")),
             initial_question_patterns=_as_str_list(obj.get("initial_question_patterns")),
             known_facts=_as_str_list(obj.get("known_facts")),
