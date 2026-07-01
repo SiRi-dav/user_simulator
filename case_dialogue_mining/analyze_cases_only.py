@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +22,8 @@ def main() -> None:
     parser.add_argument("--max-cases", type=int, default=20, help="Maximum cases to analyze. Use 0 for all.")
     parser.add_argument("--case-id", default="", help="Optional single case_id")
     parser.add_argument("--resume", action="store_true", help="Resume from existing output JSONL")
+    parser.add_argument("--retries", type=int, default=2, help="Retries per case after a failed local AI request")
+    parser.add_argument("--retry-delay", type=float, default=5.0, help="Seconds to wait between retries")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -56,7 +59,13 @@ def main() -> None:
         print(f"[{index}/{len(cases)}] Analyzing case-only {case.case_id}", flush=True)
         prompt = build_case_only_question_pattern_prompt(case)
         try:
-            raw_response = ai_client.generate(prompt)
+            raw_response = generate_with_retries(
+                ai_client,
+                prompt,
+                case_id=case.case_id,
+                retries=args.retries,
+                retry_delay=args.retry_delay,
+            )
             pattern = parse_pattern(case.case_id, raw_response)
             patterns.append(pattern)
             append_jsonl(output_path, to_dict(pattern))
@@ -91,6 +100,24 @@ def load_completed_case_ids(path: Path) -> set[str]:
     if not path.exists():
         return set()
     return {str(record.get("case_id")) for record in read_jsonl(path) if record.get("case_id")}
+
+
+def generate_with_retries(ai_client, prompt: str, case_id: str, retries: int, retry_delay: float) -> str:
+    max_attempts = max(1, retries + 1)
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return ai_client.generate(prompt)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= max_attempts:
+                break
+            print(
+                f"case-only analysis retry {attempt}/{retries} for {case_id}: {exc}",
+                flush=True,
+            )
+            time.sleep(max(0.0, retry_delay))
+    raise RuntimeError(str(last_error))
 
 
 def resolve_path(base_dir: Path, value: str) -> Path:

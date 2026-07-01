@@ -157,6 +157,26 @@ python analyze_cases_only.py \
   --max-cases 20
 ```
 
+If a few local-model calls time out, rerun with resume enabled. Successful cases are kept and only unfinished cases are retried:
+
+```bash
+python analyze_cases_only.py \
+  --config config.yaml \
+  --max-cases 20 \
+  --resume
+```
+
+Case-only analysis retries each failed local AI request twice by default. You can tune it:
+
+```bash
+python analyze_cases_only.py \
+  --config config.yaml \
+  --max-cases 20 \
+  --resume \
+  --retries 4 \
+  --retry-delay 10
+```
+
 This only reads the case library and asks the local model to infer likely user-side patterns from the case title, phenomenon, and solution.
 
 Outputs:
