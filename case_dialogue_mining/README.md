@@ -164,6 +164,35 @@ Available user modes:
 - `vague_user`: starts vague and forces clarification
 - `difficult_user`: confused, less satisfied, asks for more concrete guidance
 
+The simulator now follows two lines:
+
+- `case-dialogue pair grounding`: controls the target `case_id`, known facts, hidden slots, and reveal plan
+- `persona / behavior`: controls how the user speaks, how cooperative they are, and how quickly they reveal information
+
+By default the simulator picks a stable persona automatically for each case. To inspect built-in personas:
+
+```bash
+python simulate_from_patterns.py --list-personas
+```
+
+To force one persona:
+
+```bash
+python simulate_from_patterns.py \
+  --mode replay_like \
+  --persona low_tech_confused \
+  --limit 20
+```
+
+Built-in persona ids:
+
+- `cooperative_normal`
+- `vague_low_context`
+- `low_tech_confused`
+- `impatient_user`
+- `tried_and_failed`
+- `screenshot_dependent`
+
 The MVP uses a deterministic mock QA opponent by default. It is meant to validate user behavior and data shape first; later the mock QA can be replaced by the real客服 AI endpoint.
 
 Simulator output masks URLs, emails, phone numbers, and long numeric IDs by default. Use `--no-mask` only for internal debugging on approved machines.
@@ -178,11 +207,12 @@ By default, user utterances are rule-generated. To let the local model only rewr
 ```bash
 python simulate_from_patterns.py \
   --mode difficult_user \
+  --persona low_tech_confused \
   --limit 20 \
   --llm-rewrite
 ```
 
-This does not let the model decide which slot to reveal; it only rewrites the already selected user sentence.
+This does not let the model decide which slot to reveal; it only rewrites the already selected user sentence. The rewrite prompt contains both the case-grounding line and the persona/behavior line.
 
 The local NAS-style endpoint uses `api_key="EMPTY"` by default. If the server later requires a real key, set `LOCAL_AI_API_KEY` and it will override the default.
 

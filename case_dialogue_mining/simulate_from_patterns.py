@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from local_ai_client import LocalAIClient, MockLocalAIClient, build_local_ai_client
+from persona_bank import choose_persona, load_personas, persona_summary
 from utils import read_jsonl, write_jsonl
 
 
@@ -25,6 +26,9 @@ def main() -> None:
     parser.add_argument("--case-id", default="", help="Optional target case_id")
     parser.add_argument("--limit", type=int, default=10, help="Maximum cases to simulate. Use 0 for all.")
     parser.add_argument("--mode", default="replay_like", choices=["replay_like", "vague_user", "difficult_user"])
+    parser.add_argument("--persona", default="auto", help="Persona id from the persona bank, or auto")
+    parser.add_argument("--persona-bank", default="", help="Optional JSON persona bank path. Defaults to built-in personas.")
+    parser.add_argument("--list-personas", action="store_true", help="List available personas and exit")
     parser.add_argument("--max-turns", type=int, default=6, help="Maximum user turns")
     parser.add_argument("--agent", default="mock", choices=["mock", "none"], help="Use mock QA opponent or only emit user plan")
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
@@ -41,6 +45,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.llm_rewrite:
         args.rewrite_provider = "openai-compatible"
+    personas = load_personas(args.persona_bank)
+    if args.list_personas:
+        for persona in personas:
+            print(f"{persona.get('persona_id')}: {persona.get('name')} - {persona_summary(persona)}")
+        return
 
     patterns = [record for record in read_jsonl(Path(args.patterns)) if not record.get("parse_error")]
     if args.case_id:
@@ -56,12 +65,14 @@ def main() -> None:
             max_turns=args.max_turns,
             agent=args.agent,
             rewrite_client=rewrite_client,
+            personas=personas,
+            persona_id=args.persona,
         )
         for pattern in patterns
     ]
     if not args.no_mask:
         results = [mask_value(result) for result in results]
-    output_path = Path(args.output) if args.output else default_output_path(args.mode, args.rewrite_provider)
+    output_path = Path(args.output) if args.output else default_output_path(args.mode, args.rewrite_provider, args.persona)
     readable_path = Path(args.readable_output) if args.readable_output else default_readable_path(output_path)
     write_jsonl(results, output_path)
     readable_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,9 +101,10 @@ def build_rewrite_client(args: argparse.Namespace) -> LocalAIClient:
     )
 
 
-def default_output_path(mode: str, rewrite_provider: str) -> Path:
+def default_output_path(mode: str, rewrite_provider: str, persona_id: str = "auto") -> Path:
     suffix = ".llm" if rewrite_provider != "mock" else ""
-    return Path("outputs") / f"simulated_dialogues.{mode}{suffix}.jsonl"
+    persona_suffix = "" if not persona_id or persona_id == "auto" else f".{persona_id}"
+    return Path("outputs") / f"simulated_dialogues.{mode}{persona_suffix}{suffix}.jsonl"
 
 
 def simulate_case(
@@ -101,18 +113,22 @@ def simulate_case(
     max_turns: int,
     agent: str,
     rewrite_client: LocalAIClient,
+    personas: List[Dict[str, Any]],
+    persona_id: str,
 ) -> Dict[str, Any]:
-    state = build_initial_state(pattern, mode)
+    persona = choose_persona(personas, persona_id, str(pattern.get("case_id") or ""), mode)
+    state = build_initial_state(pattern, mode, persona)
     turns: List[Dict[str, Any]] = []
     agent_response: Optional[str] = None
 
     for user_turn_id in range(1, max_turns + 1):
-        user_text, user_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id)
+        user_text, user_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id, persona)
         user_text = rewrite_user_utterance(
             text=user_text,
             action=user_action,
             pattern=pattern,
             mode=mode,
+            persona=persona,
             agent_response=agent_response,
             rewrite_client=rewrite_client,
         )
@@ -140,12 +156,13 @@ def simulate_case(
         )
         agent_response = agent_step["text"]
         if agent_step["action"] == "answer" and mode != "difficult_user":
-            final_text, final_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id + 1)
+            final_text, final_action = next_user_utterance(pattern, state, agent_response, mode, user_turn_id + 1, persona)
             final_text = rewrite_user_utterance(
                 text=final_text,
                 action=final_action,
                 pattern=pattern,
                 mode=mode,
+                persona=persona,
                 agent_response=agent_response,
                 rewrite_client=rewrite_client,
             )
@@ -163,6 +180,12 @@ def simulate_case(
     return {
         "case_id": pattern.get("case_id"),
         "mode": mode,
+        "persona": {
+            "persona_id": persona.get("persona_id"),
+            "name": persona.get("name"),
+            "summary": persona_summary(persona),
+            "behavior_rules": persona.get("behavior_rules", []),
+        },
         "case_to_question_summary": pattern.get("case_to_question_summary", ""),
         "evaluation_focus": pattern.get("evaluation_focus", []),
         "turns": turns,
@@ -179,12 +202,13 @@ def rewrite_user_utterance(
     action: str,
     pattern: Dict[str, Any],
     mode: str,
+    persona: Dict[str, Any],
     agent_response: Optional[str],
     rewrite_client: LocalAIClient,
 ) -> str:
     if isinstance(rewrite_client, MockLocalAIClient):
         return text
-    prompt = build_rewrite_prompt(text, action, pattern, mode, agent_response)
+    prompt = build_rewrite_prompt(text, action, pattern, mode, persona, agent_response)
     try:
         rewritten = rewrite_client.generate(prompt).strip()
     except Exception as exc:
@@ -203,29 +227,54 @@ def build_rewrite_prompt(
     action: str,
     pattern: Dict[str, Any],
     mode: str,
+    persona: Dict[str, Any],
     agent_response: Optional[str],
 ) -> str:
     payload = {
-        "case_id": pattern.get("case_id"),
-        "mode": mode,
-        "user_action": action,
-        "agent_response": agent_response or "",
-        "original_user_text": text,
-        "user_style_summary": pattern.get("user_style_summary", ""),
-        "opening_examples": pattern.get("initial_question_patterns", [])[:3],
+        "case_grounding_line": {
+            "case_id": pattern.get("case_id"),
+            "case_to_question_summary": pattern.get("case_to_question_summary", ""),
+            "surface_problem_patterns": pattern.get("surface_problem_patterns", [])[:5],
+            "opening_examples": pattern.get("initial_question_patterns", [])[:3],
+            "evaluation_focus": pattern.get("evaluation_focus", [])[:5],
+        },
+        "persona_behavior_line": {
+            "mode": mode,
+            "persona_id": persona.get("persona_id"),
+            "persona_name": persona.get("name"),
+            "technical_level": persona.get("technical_level"),
+            "clarity": persona.get("clarity"),
+            "cooperation": persona.get("cooperation"),
+            "patience": persona.get("patience"),
+            "disclosure_style": persona.get("disclosure_style"),
+            "language_style": persona.get("language_style"),
+            "behavior_rules": persona.get("behavior_rules", []),
+            "dialogue_observed_user_style": pattern.get("user_style_summary", ""),
+        },
+        "current_turn": {
+            "user_action": action,
+            "agent_response": agent_response or "",
+            "selected_user_content": text,
+        },
         "constraints": [
             "只输出一句用户会说的话",
             "不要替客服回答",
             "不要新增具体电话、邮箱、URL、账号、人员姓名",
-            "不要改变原句必须表达的信息",
+            "不要改变 selected_user_content 必须表达的信息",
+            "必须保持 case_grounding_line 中的目标问题，不要转移到其他 case",
+            "按照 persona_behavior_line 的技术水平、配合程度、耐心和语言风格表达",
             "长度控制在80个中文字符以内",
         ],
     }
     return f"""
 你是企业内部客服问答场景中的用户话语改写器。
 
-任务：把 original_user_text 改写得更像真实员工用户说的话。
-你只能润色表达，不允许改变用户状态，不允许新增事实。
+任务：根据两条主线改写用户下一句话。
+
+主线1：Case Grounding 决定用户遇到什么问题、最终通向哪个 case。
+主线2：Persona / Behavior 决定用户怎么表达、是否配合、是否容易困惑。
+
+你只能润色 selected_user_content，不允许改变用户状态，不允许新增事实。
 
 输入：
 {json.dumps(payload, ensure_ascii=False, indent=2)}
@@ -243,16 +292,25 @@ def strip_wrapping_quotes(text: str) -> str:
     return text.strip('"“”')
 
 
-def build_initial_state(pattern: Dict[str, Any], mode: str) -> Dict[str, Any]:
+def build_initial_state(pattern: Dict[str, Any], mode: str, persona: Dict[str, Any]) -> Dict[str, Any]:
     slots = normalize_slots(pattern)
-    if mode == "vague_user":
+    persona_id = str(persona.get("persona_id") or "")
+    if mode == "vague_user" or persona_id in {"vague_low_context", "screenshot_dependent"}:
         slots = slots + slots[:1]
-    if mode == "difficult_user":
+    if mode == "difficult_user" or persona_id == "low_tech_confused":
         slots = slots + [
             {
                 "slot": "用户不理解术语",
                 "ask_label": "用户是否理解操作步骤",
                 "example_user_phrase": "这个我不太懂，能说简单点吗？",
+            }
+        ]
+    if persona_id == "tried_and_failed":
+        slots = slots + [
+            {
+                "slot": "用户已尝试常规方案但失败",
+                "ask_label": "是否已经尝试过常规处理",
+                "example_user_phrase": "我刚才其实已经试过一次了，但还是不行。",
             }
         ]
     return {
@@ -261,6 +319,7 @@ def build_initial_state(pattern: Dict[str, Any], mode: str) -> Dict[str, Any]:
         "used_opening": "",
         "solution_seen": False,
         "clarification_count": 0,
+        "persona_id": persona.get("persona_id"),
     }
 
 
@@ -270,17 +329,23 @@ def next_user_utterance(
     agent_response: Optional[str],
     mode: str,
     user_turn_id: int,
+    persona: Dict[str, Any],
 ) -> tuple[str, str]:
+    persona_id = str(persona.get("persona_id") or "")
     if user_turn_id == 1:
-        opening = choose_opening(pattern, mode)
+        opening = choose_opening(pattern, mode, persona)
         state["used_opening"] = opening
         return opening, "opening"
 
     agent_response = agent_response or ""
     if looks_like_solution(agent_response):
         state["solution_seen"] = True
-        if mode == "difficult_user" and state["slots"]:
+        if (mode == "difficult_user" or persona_id in {"low_tech_confused", "tried_and_failed"}) and state["slots"]:
+            if persona_id == "tried_and_failed":
+                return "这个方法我好像已经试过了，还是没解决。", "solution_failed"
             return "我还是不太确定该点哪里，能不能再具体一点？", "ask_more_detail"
+        if persona_id == "impatient_user":
+            return "行，我先试。要是还不行我再反馈。", "accept_solution"
         return "好的，那我先按这个试一下，谢谢。", "accept_solution"
 
     if looks_like_clarification(agent_response) and state["slots"]:
@@ -289,31 +354,40 @@ def next_user_utterance(
         state["revealed_slots"].append(str(slot.get("slot") or "unknown_slot"))
         phrase = str(slot.get("example_user_phrase") or "").strip()
         if phrase:
-            return apply_mode_style(phrase, mode), "reveal_slot"
+            return apply_persona_style(apply_mode_style(phrase, mode), persona, "reveal_slot"), "reveal_slot"
         label = slot.get("slot") or "相关信息"
-        return apply_mode_style(f"我补充一下，{label} 是这样的。", mode), "reveal_slot"
+        return apply_persona_style(apply_mode_style(f"我补充一下，{label} 是这样的。", mode), persona, "reveal_slot"), "reveal_slot"
 
     if state["slots"]:
         slot = state["slots"].pop(0)
         state["revealed_slots"].append(str(slot.get("slot") or "unknown_slot"))
-        return apply_mode_style(str(slot.get("example_user_phrase") or slot.get("slot")), mode), "proactive_followup"
+        return apply_persona_style(apply_mode_style(str(slot.get("example_user_phrase") or slot.get("slot")), mode), persona, "proactive_followup"), "proactive_followup"
 
-    if mode == "difficult_user":
+    if persona_id == "impatient_user":
+        return "我这边比较急，能不能直接告诉我下一步怎么处理？", "ask_more_detail"
+    if mode == "difficult_user" or persona_id == "low_tech_confused":
         return "我这边还是没弄好，是不是还缺什么信息？", "ask_more_detail"
     return "我这边能提供的信息就这些了。", "no_more_info"
 
 
-def choose_opening(pattern: Dict[str, Any], mode: str) -> str:
+def choose_opening(pattern: Dict[str, Any], mode: str, persona: Dict[str, Any]) -> str:
     openings = clean_list(pattern.get("opening_question_templates")) or clean_list(pattern.get("initial_question_patterns"))
     surfaces = clean_list(pattern.get("surface_problem_patterns"))
-    if mode == "vague_user":
+    persona_id = str(persona.get("persona_id") or "")
+    if mode == "vague_user" or persona_id == "vague_low_context":
         if surfaces:
-            return make_vague_opening(surfaces[0])
+            return apply_persona_style(make_vague_opening(surfaces[0]), persona, "opening")
         return "我这边有个问题，帮我看一下。"
-    if mode == "difficult_user":
+    if persona_id == "screenshot_dependent":
+        base = surfaces[0] if surfaces else (openings[0] if openings else "这里有个报错。")
+        return apply_persona_style(make_vague_opening(base), persona, "opening")
+    if mode == "difficult_user" or persona_id == "low_tech_confused":
         base = openings[0] if openings else (surfaces[0] if surfaces else "这个功能用不了。")
-        return apply_mode_style(base, mode)
-    return openings[0] if openings else (surfaces[0] if surfaces else "你好，帮我看一个问题。")
+        return apply_persona_style(apply_mode_style(base, mode), persona, "opening")
+    if persona_id == "impatient_user":
+        base = openings[0] if openings else (surfaces[0] if surfaces else "你好，帮我看一个问题。")
+        return apply_persona_style(base, persona, "opening")
+    return apply_persona_style(openings[0] if openings else (surfaces[0] if surfaces else "你好，帮我看一个问题。"), persona, "opening")
 
 
 def normalize_slots(pattern: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -398,6 +472,49 @@ def apply_mode_style(text: str, mode: str) -> str:
     return text
 
 
+def apply_persona_style(text: str, persona: Dict[str, Any], action: str) -> str:
+    text = text.strip()
+    persona_id = str(persona.get("persona_id") or "")
+    if not text:
+        return text
+
+    if persona_id == "impatient_user":
+        if action == "opening":
+            return append_suffix_once(text, "这个挺影响我工作的，能尽快看下吗？")
+        if action in {"reveal_slot", "proactive_followup"}:
+            return append_suffix_once(text, "能不能快点定位一下？")
+
+    if persona_id == "low_tech_confused":
+        if "不太懂" not in text and action != "opening":
+            return append_suffix_once(text, "我不太懂这个要怎么看。")
+
+    if persona_id == "vague_low_context":
+        if action == "opening":
+            return make_vague_opening(text)
+        if "不太清楚" not in text and len(text) < 55:
+            return append_suffix_once(text, "其他我也不太清楚。")
+
+    if persona_id == "screenshot_dependent":
+        if action == "opening":
+            return append_suffix_once(text, "我这边像是有个提示，如图那种。")
+        if len(text) < 55 and "截图" not in text and "图" not in text:
+            return append_suffix_once(text, "我这边截图里就是这样显示的。")
+
+    if persona_id == "tried_and_failed":
+        if action in {"reveal_slot", "proactive_followup"} and "试过" not in text and len(text) < 55:
+            return append_suffix_once(text, "我刚才也试过一次。")
+
+    return text
+
+
+def append_suffix_once(text: str, suffix: str) -> str:
+    text = text.rstrip("。！？；，,.!?; ")
+    suffix = suffix.strip()
+    if suffix in text:
+        return text
+    return f"{text}，{suffix}" if not suffix.startswith(("。", "！", "？")) else f"{text}{suffix}"
+
+
 def hidden_fact_to_user_phrase(text: str) -> str:
     text = text.strip()
     replacements = (
@@ -454,6 +571,11 @@ def build_readable_report(results: List[Dict[str, Any]]) -> str:
         summary = result.get("case_to_question_summary")
         if summary:
             lines.append(f"- case to question: {summary}")
+        persona = result.get("persona") or {}
+        if persona:
+            lines.append(f"- persona: {persona.get('name') or persona.get('persona_id')} ({persona.get('persona_id')})")
+            if persona.get("summary"):
+                lines.append(f"- persona summary: {persona.get('summary')}")
         focus = result.get("evaluation_focus") or []
         if focus:
             lines.append(f"- evaluation focus: {'；'.join(str(item) for item in focus[:3])}")
