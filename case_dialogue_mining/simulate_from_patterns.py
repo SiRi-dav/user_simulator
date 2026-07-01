@@ -21,7 +21,7 @@ LONG_ID_RE = re.compile(r"(?<![A-Za-z0-9])\d{8,}(?![A-Za-z0-9])")
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run a lightweight user simulator from question_patterns.jsonl.")
     parser.add_argument("--patterns", default="outputs/question_patterns.jsonl", help="question_patterns.jsonl path")
-    parser.add_argument("--output", default="outputs/simulated_dialogues.jsonl", help="Output JSONL path")
+    parser.add_argument("--output", default="", help="Output JSONL path. Defaults to outputs/simulated_dialogues.<mode>[.llm].jsonl")
     parser.add_argument("--case-id", default="", help="Optional target case_id")
     parser.add_argument("--limit", type=int, default=10, help="Maximum cases to simulate. Use 0 for all.")
     parser.add_argument("--mode", default="replay_like", choices=["replay_like", "vague_user", "difficult_user"])
@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--agent", default="mock", choices=["mock", "none"], help="Use mock QA opponent or only emit user plan")
     parser.add_argument("--no-mask", action="store_true", help="Do not mask URLs, emails, phones, or long numeric IDs")
     parser.add_argument("--readable-output", default="", help="Optional readable Markdown output path")
+    parser.add_argument("--llm-rewrite", action="store_true", help="Shortcut for --rewrite-provider openai-compatible")
     parser.add_argument("--rewrite-provider", default="mock", choices=["mock", "openai-compatible"], help="LLM provider for user utterance rewriting")
     parser.add_argument("--rewrite-endpoint", default="http://localhost:8850/v1/chat/completions")
     parser.add_argument("--rewrite-model", default="qwen3-32b")
@@ -38,6 +39,8 @@ def main() -> None:
     parser.add_argument("--rewrite-max-tokens", type=int, default=256)
     parser.add_argument("--rewrite-timeout", type=int, default=60)
     args = parser.parse_args()
+    if args.llm_rewrite:
+        args.rewrite_provider = "openai-compatible"
 
     patterns = [record for record in read_jsonl(Path(args.patterns)) if not record.get("parse_error")]
     if args.case_id:
@@ -58,7 +61,7 @@ def main() -> None:
     ]
     if not args.no_mask:
         results = [mask_value(result) for result in results]
-    output_path = Path(args.output)
+    output_path = Path(args.output) if args.output else default_output_path(args.mode, args.rewrite_provider)
     readable_path = Path(args.readable_output) if args.readable_output else default_readable_path(output_path)
     write_jsonl(results, output_path)
     readable_path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +88,11 @@ def build_rewrite_client(args: argparse.Namespace) -> LocalAIClient:
             "system_prompt": "你是企业客服场景中的用户话语改写器，只输出用户话语。",
         }
     )
+
+
+def default_output_path(mode: str, rewrite_provider: str) -> Path:
+    suffix = ".llm" if rewrite_provider != "mock" else ""
+    return Path("outputs") / f"simulated_dialogues.{mode}{suffix}.jsonl"
 
 
 def simulate_case(

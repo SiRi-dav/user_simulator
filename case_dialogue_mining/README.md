@@ -154,8 +154,6 @@ After `question_patterns.jsonl` is generated, run a first simulator version dire
 
 ```bash
 python simulate_from_patterns.py \
-  --patterns outputs/question_patterns.jsonl \
-  --output outputs/simulated_dialogues.jsonl \
   --mode replay_like \
   --limit 20
 ```
@@ -179,13 +177,9 @@ By default, user utterances are rule-generated. To let the local model only rewr
 
 ```bash
 python simulate_from_patterns.py \
-  --patterns outputs/question_patterns.jsonl \
-  --output outputs/simulated_dialogues.hard.llm.jsonl \
   --mode difficult_user \
   --limit 20 \
-  --rewrite-provider openai-compatible \
-  --rewrite-endpoint http://localhost:8850/v1/chat/completions \
-  --rewrite-model qwen3-32b
+  --llm-rewrite
 ```
 
 This does not let the model decide which slot to reveal; it only rewrites the already selected user sentence.
@@ -195,7 +189,7 @@ The local NAS-style endpoint uses `api_key="EMPTY"` by default. If the server la
 To emit only the user plan/opening without mock QA:
 
 ```bash
-python simulate_from_patterns.py --patterns outputs/question_patterns.jsonl --agent none
+python simulate_from_patterns.py --agent none
 ```
 
 For local keyed sample validation:
