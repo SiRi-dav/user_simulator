@@ -46,8 +46,12 @@ The client is OpenAI-compatible and calls `/chat/completions`.
 
 ## Run Demo
 
+The recommended workflow is staged. Do not run the full case-analysis pipeline every time you want one simulation.
+
 ```bash
 cd User_simulator2.0
+python main.py mine-behavior --max_dialogues 20
+python main.py analyze-cases --limit 20
 python main.py simulate --case_id <真实案例ID> --persona low_tech
 ```
 
@@ -56,7 +60,7 @@ Case data is loaded from the configured real case library path in `config.yaml`.
 To inspect available case ids first:
 
 ```bash
-python main.py --list_cases 20
+python main.py simulate --list_cases 20
 ```
 
 Legacy direct invocation is still supported:
@@ -124,6 +128,36 @@ python main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
 
 If `--persona_id` is omitted and `outputs/employee_personas.jsonl` exists, the first mined persona is used. If no mined persona exists, the built-in `--persona` value is used.
 
+## Batch Case Analysis
+
+Case analysis is an offline preprocessing step. It builds reusable artifacts for each target case:
+
+```bash
+python main.py analyze-cases --limit 20
+```
+
+Or select exact cases:
+
+```bash
+python main.py analyze-cases --case_ids <CASE_ID_1> <CASE_ID_2>
+```
+
+It writes:
+
+- `outputs/case_analysis_artifacts.jsonl`
+
+Each artifact contains:
+
+- retrieval queries
+- related cases
+- verified points
+- relations
+- roadmap
+- `blind_user_view`, including the user-facing problem
+- `knowledge_module_view`, including the knowledge roadmap
+
+`simulate` reads this file. If the selected case has not been analyzed yet, `simulate` stops and tells you to run `analyze-cases` first.
+
 ## Outputs
 
 All intermediate results are saved as JSONL records under `outputs/`.
@@ -134,6 +168,7 @@ All intermediate results are saved as JSONL records under `outputs/`.
 - `verified_points.jsonl`: verified and dropped points
 - `relations.jsonl`: point relations
 - `roadmaps.jsonl`: assembled roadmaps
+- `case_analysis_artifacts.jsonl`: reusable per-case roadmaps and views for runtime
 - `simulation_logs.jsonl`: runtime turn logs
 - `dialogue_behavior_summaries.jsonl`: per-dialogue behavior summaries
 - `employee_personas.jsonl`: mined employee persona library

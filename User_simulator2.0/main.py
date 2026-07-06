@@ -16,8 +16,8 @@ from src.retrieval.related_case_retriever import RelatedCaseRetriever
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.simulator import Simulator
-from src.schemas import BehaviorTaxonomy, EmployeePersona, model_to_dict
-from src.utils.jsonl import read_jsonl
+from src.schemas import BehaviorTaxonomy, Case, CaseAnalysisArtifact, EmployeePersona, Roadmap, model_to_dict
+from src.utils.jsonl import read_jsonl, write_jsonl
 from src.utils.logging import OutputLogger
 
 
@@ -42,6 +42,9 @@ def main() -> None:
     if command == "mine-behavior":
         run_mine_behavior(args, config, root, output_dir, logger, parser)
         return
+    if command == "analyze-cases":
+        run_analyze_cases(args, config, root, output_dir, logger, parser)
+        return
     run_simulate(args, config, root, output_dir, logger, parser)
 
 
@@ -54,13 +57,19 @@ def build_parser() -> argparse.ArgumentParser:
     simulate.add_argument("--config", default="config.yaml")
     add_simulate_args(simulate)
 
+    analyze = subparsers.add_parser("analyze-cases", help="Precompute roadmaps and knowledge artifacts for target cases.")
+    analyze.add_argument("--config", default="config.yaml")
+    analyze.add_argument("--limit", type=int, default=20)
+    analyze.add_argument("--offset", type=int, default=0)
+    analyze.add_argument("--case_ids", nargs="*")
+
     mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
     mine.add_argument("--config", default="config.yaml")
     mine.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
     mine.add_argument("--max_dialogues", type=int, default=50)
 
     # Backward-compatible direct invocation: python main.py --case_id ...
-    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "analyze-cases", "-h", "--help"}:
         add_simulate_args(parser)
     return parser
 
@@ -100,6 +109,31 @@ def run_mine_behavior(
     print(f"Outputs written to: {output_dir}")
 
 
+def run_analyze_cases(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    logger: OutputLogger,
+    parser: argparse.ArgumentParser,
+) -> None:
+    cases = load_configured_cases(config, root, parser)
+    if args.case_ids:
+        selected_cases = [get_case(cases, case_id) for case_id in args.case_ids]
+    else:
+        selected_cases = cases[args.offset : args.offset + args.limit]
+    if not selected_cases:
+        parser.error("No cases selected for analysis.")
+    llm_client = OpenAICompatibleClient.from_config(config)
+    artifacts: list[CaseAnalysisArtifact] = []
+    for index, target_case in enumerate(selected_cases, 1):
+        print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
+        artifacts.append(build_case_analysis_artifact(target_case, cases, llm_client, logger))
+    artifact_path = output_dir / "case_analysis_artifacts.jsonl"
+    write_jsonl(artifact_path, [model_to_dict(artifact) for artifact in artifacts])
+    print(f"Wrote {len(artifacts)} case analysis artifacts to: {artifact_path}")
+
+
 def run_simulate(
     args: argparse.Namespace,
     config: Dict[str, Any],
@@ -108,14 +142,8 @@ def run_simulate(
     logger: OutputLogger,
     parser: argparse.ArgumentParser,
 ) -> None:
-    cases_config = config.get("paths", {}).get("cases")
-    if not cases_config:
-        parser.error("Missing paths.cases in config.yaml; it must point to the real case library.")
-    cases_path = resolve_path(root, str(cases_config))
-    if not cases_path.exists():
-        parser.error(f"Configured case library does not exist: {cases_path}")
-    cases = load_cases(cases_path, config.get("case_fields"))
     if args.list_cases:
+        cases = load_configured_cases(config, root, parser)
         for case in cases[: args.list_cases]:
             print(f"{case.case_id}\t{case.title}")
         return
@@ -123,7 +151,14 @@ def run_simulate(
         parser.error("--case_id is required unless --list_cases is used")
 
     llm_client = OpenAICompatibleClient.from_config(config)
-    target_case = get_case(cases, args.case_id)
+    artifacts = load_case_analysis_artifacts(output_dir / "case_analysis_artifacts.jsonl")
+    artifact = artifacts.get(args.case_id)
+    if artifact is None:
+        parser.error(
+            f"No precomputed case artifact found for {args.case_id}. "
+            "Run: python3 main.py analyze-cases --case_ids "
+            f"{args.case_id}"
+        )
     employee_personas = load_employee_personas(output_dir / "employee_personas.jsonl")
     behavior_taxonomy = load_behavior_taxonomy(output_dir / "user_behavior_taxonomy.jsonl")
     try:
@@ -132,14 +167,8 @@ def run_simulate(
         parser.error(str(exc))
     persona = model_to_dict(employee_persona) if employee_persona else PERSONAS[args.persona]
 
-    queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
-    related_cases = RelatedCaseRetriever(llm_client, logger).retrieve(target_case, queries, cases)
-    points = PointExtractor(llm_client, logger).extract_points(target_case, related_cases)
-    verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
-    relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)
-    roadmap = RoadmapBuilder(llm_client, logger).build_roadmap(target_case, verification.verified_points, relations)
     simulator = Simulator(
-        roadmap,
+        artifact.roadmap,
         persona,
         llm_client,
         logger,
@@ -168,6 +197,70 @@ def run_simulate(
             print(f"[STOP: {simulator.state.stop_reason or simulator.state.solution_status}]")
     if not simulator.state.should_stop:
         print(f"[STOP: max_turns={args.max_turns}]")
+
+
+def load_configured_cases(config: Dict[str, Any], root: Path, parser: argparse.ArgumentParser) -> list[Case]:
+    cases_config = config.get("paths", {}).get("cases")
+    if not cases_config:
+        parser.error("Missing paths.cases in config.yaml; it must point to the real case library.")
+    cases_path = resolve_path(root, str(cases_config))
+    if not cases_path.exists():
+        parser.error(f"Configured case library does not exist: {cases_path}")
+    cases = load_cases(cases_path, config.get("case_fields"))
+    if not cases:
+        parser.error(f"No usable cases loaded from: {cases_path}")
+    return cases
+
+
+def build_case_analysis_artifact(
+    target_case: Case,
+    all_cases: list[Case],
+    llm_client: OpenAICompatibleClient,
+    logger: OutputLogger,
+) -> CaseAnalysisArtifact:
+    queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
+    related_cases = RelatedCaseRetriever(llm_client, logger).retrieve(target_case, queries, all_cases)
+    points = PointExtractor(llm_client, logger).extract_points(target_case, related_cases)
+    verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
+    relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)
+    roadmap = RoadmapBuilder(llm_client, logger).build_roadmap(target_case, verification.verified_points, relations)
+    return CaseAnalysisArtifact(
+        case_id=target_case.case_id,
+        target_case=target_case,
+        retrieval_queries=queries,
+        related_cases=related_cases,
+        verified_points=verification.verified_points,
+        dropped_points=verification.dropped_points,
+        warnings=verification.warnings,
+        relations=relations,
+        roadmap=roadmap,
+        blind_user_view=build_blind_user_view(roadmap),
+        knowledge_module_view=build_knowledge_module_view(roadmap),
+    )
+
+
+def build_blind_user_view(roadmap: Roadmap) -> Dict[str, Any]:
+    return {
+        "surface_problem": roadmap.surface_problem,
+        "opening_intent": roadmap.opening_intent,
+        "user_facing_points": [model_to_dict(point) for point in roadmap.user_facing_points],
+        "forbidden_content": roadmap.forbidden_content,
+    }
+
+
+def build_knowledge_module_view(roadmap: Roadmap) -> Dict[str, Any]:
+    return {
+        "roadmap": model_to_dict(roadmap),
+        "priority_note": "Roadmap factual constraints decide allowed_content; behavior taxonomy only controls reaction style.",
+    }
+
+
+def load_case_analysis_artifacts(path: Path) -> dict[str, CaseAnalysisArtifact]:
+    artifacts: dict[str, CaseAnalysisArtifact] = {}
+    for record in read_jsonl(path):
+        artifact = CaseAnalysisArtifact(**record)
+        artifacts[artifact.case_id] = artifact
+    return artifacts
 
 
 def load_employee_personas(path: Path) -> list[EmployeePersona]:

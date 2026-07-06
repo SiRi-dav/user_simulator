@@ -26,36 +26,50 @@
 
 主入口是 `main.py`。
 
-完整流程如下：
+当前流程拆成三个阶段，避免每次指定一个 case 都重新跑完整 pipeline。
+
+第一阶段：历史对话行为挖掘
 
 1. 读取 `config.yaml`
-2. 按 `config.yaml` 中的路径加载真实案例库
-3. 根据 `--case_id` 从真实案例库中选择 target case
-4. `QueryGenerator` 用 LLM 生成 related case 检索 query
-5. `RelatedCaseRetriever` 用 LLM 从候选 case 中选择 related cases
-6. `PointExtractor` 用 LLM 抽取 knowledge points
-7. `PointVerifier` 用 LLM 校验 points
-8. `RelationBuilder` 用 LLM 建立 point relations
-9. `RoadmapBuilder` 用 LLM 组装 roadmap
-10. `Simulator.start()` 用 LLM 生成初始用户发言
-11. 人工在命令行输入 assistant 回复
-12. `Simulator.step()` 串起：
+2. 按 `config.yaml` 中的真实历史对话路径加载 dialogue logs
+3. 对每条 dialogue 用 LLM 生成 `DialogueBehaviorSummary`
+4. 汇总 summaries 后用 LLM 挖掘 `EmployeePersona`
+5. 汇总 summaries 后用 LLM 挖掘 `BehaviorTaxonomy`
+6. 写入 `outputs/dialogue_behavior_summaries.jsonl`
+7. 写入 `outputs/employee_personas.jsonl`
+8. 写入 `outputs/user_behavior_taxonomy.jsonl`
+
+第二阶段：批量案例分析与路书生成
+
+1. 按 `config.yaml` 中的路径加载真实案例库
+2. 选择前 N 个 case，或选择 `--case_ids` 指定的 case
+3. `QueryGenerator` 用 LLM 生成 related case 检索 query
+4. `RelatedCaseRetriever` 用 LLM 从候选 case 中选择 related cases
+5. `PointExtractor` 用 LLM 抽取 knowledge points
+6. `PointVerifier` 用 LLM 校验 points
+7. `RelationBuilder` 用 LLM 建立 point relations
+8. `RoadmapBuilder` 用 LLM 组装 roadmap
+9. 写入 `outputs/case_analysis_artifacts.jsonl`
+
+每个 artifact 中包含：
+
+- `blind_user_view`: 给 Blind User 看的用户问题、开场意图、用户可见 facts
+- `knowledge_module_view`: 给 Knowledge Module 看的完整知识 roadmap
+- `roadmap`: runtime 使用的事实边界
+
+第三阶段：在线模拟
+
+1. 根据 `--case_id` 从 `outputs/case_analysis_artifacts.jsonl` 读取预生成路书
+2. 读取 `outputs/employee_personas.jsonl` 和 `outputs/user_behavior_taxonomy.jsonl`
+3. `Simulator.start()` 用 LLM 生成初始用户发言
+4. 人工在命令行输入 assistant 回复
+5. `Simulator.step()` 串起：
     - Blind User 解析 assistant act
     - Knowledge Module 做知识决策
     - Blind User 生成自然用户回复
     - 更新 dialogue state
     - 写入 simulation log
-13. 如果 LLM 判断已解决，或达到 `--max_turns`，对话结束
-
-历史对话行为挖掘是一个独立前置流程：
-
-1. 按 `config.yaml` 中的真实历史对话路径加载 dialogue logs
-2. 对每条 dialogue 用 LLM 生成 `DialogueBehaviorSummary`
-3. 汇总 summaries 后用 LLM 挖掘 `EmployeePersona`
-4. 汇总 summaries 后用 LLM 挖掘 `BehaviorTaxonomy`
-5. 写入 `outputs/dialogue_behavior_summaries.jsonl`
-6. 写入 `outputs/employee_personas.jsonl`
-7. 写入 `outputs/user_behavior_taxonomy.jsonl`
+6. 如果 LLM 判断已解决，或达到 `--max_turns`，对话结束
 
 注意：历史对话只负责总结用户行为结构，不参与 target case 的知识点抽取，也不生成 roadmap。
 
@@ -63,15 +77,16 @@
 
 ### `main.py`
 
-命令行入口，负责串起完整 pipeline。
+命令行入口，负责三个阶段的 CLI。
 
 主要职责：
 
 - 解析命令行参数
 - 读取配置
 - 初始化 LLM client
-- 加载 case 数据
-- 依次运行 retrieval、extraction、roadmap、runtime 阶段
+- `mine-behavior`: 挖掘历史对话行为
+- `analyze-cases`: 批量分析 case 并生成可复用路书
+- `simulate`: 读取预生成路书并运行对话
 - 打印用户模拟器回复
 - 接收人工输入的 assistant 回复
 
@@ -776,6 +791,21 @@ BehaviorTaxonomy
 
 保存 roadmap assembly 的输入输出。
 
+### `outputs/case_analysis_artifacts.jsonl`
+
+保存每个 case 的可复用分析结果。后续 `simulate` 默认读取这个文件，不再现场重新运行 retrieval、extraction、roadmap。
+
+每条 artifact 包含：
+
+- target case
+- retrieval queries
+- related cases
+- verified points
+- relations
+- roadmap
+- blind user view
+- knowledge module view
+
 ### `outputs/simulation_logs.jsonl`
 
 保存每一轮 runtime 对话日志。
@@ -858,7 +888,7 @@ paths:
 先运行历史对话行为挖掘：
 
 ```bash
-python3 main.py mine-behavior
+python3 main.py mine-behavior --max_dialogues 20
 ```
 
 如果要指定历史对话文件：
@@ -867,28 +897,28 @@ python3 main.py mine-behavior
 python3 main.py mine-behavior --dialogues /path/to/dialogues.jsonl --max_dialogues 50
 ```
 
-运行 demo，其中 `--case_id` 要换成真实案例库里的案例 ID：
-
-```bash
-python3 main.py simulate --case_id <真实案例ID> --persona low_tech
-```
-
-如果已经挖掘出 employee personas，可以指定：
-
-```bash
-python3 main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
-```
-
-兼容旧命令：
-
-```bash
-python3 main.py simulate --case_id <真实案例ID> --persona low_tech
-```
-
 如果不知道真实案例库里有哪些 ID，可以先列出前 20 条：
 
 ```bash
 python3 main.py simulate --list_cases 20
+```
+
+批量分析前 20 个 case，提前生成路书：
+
+```bash
+python3 main.py analyze-cases --limit 20
+```
+
+或者只分析指定 case：
+
+```bash
+python3 main.py analyze-cases --case_ids <真实案例ID_1> <真实案例ID_2>
+```
+
+运行 demo，其中 `--case_id` 要换成已经分析过的真实案例 ID：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --persona low_tech
 ```
 
 可选 persona：
@@ -904,6 +934,12 @@ vague
 
 ```bash
 python3 main.py simulate --case_id <真实案例ID> --persona low_tech --max_turns 8
+```
+
+如果已经挖掘出 employee personas，可以指定：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
 ```
 
 运行后，程序会先生成用户开场：

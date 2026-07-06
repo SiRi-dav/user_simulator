@@ -54,7 +54,15 @@ target case
 最终产物是：
 
 ```text
-roadmap
+outputs/case_analysis_artifacts.jsonl
+```
+
+每个 case 会提前生成一份 artifact，里面包括：
+
+```text
+blind_user_view: 给 Blind User 看的用户问题、开场意图、可见事实
+knowledge_module_view: 给 Knowledge Module 看的完整知识 roadmap
+roadmap: runtime 实际使用的事实边界
 ```
 
 roadmap 决定事实边界，也就是：
@@ -111,8 +119,9 @@ outputs/user_behavior_taxonomy.jsonl
 1. 确认配置
 2. 先运行历史对话行为挖掘
 3. 查看真实案例库里的 case id
-4. 选择一个 target case 运行模拟
-5. 人工输入 assistant 回复
+4. 批量运行案例分析，提前生成多个 case 的路书
+5. 选择一个已经分析过的 case 运行模拟
+6. 人工输入 assistant 回复
 ```
 
 ## 4. 第一步：进入项目目录
@@ -218,6 +227,40 @@ CASE_yyy    另一个案例标题
 
 ## 8. 第五步：选择一个 case 运行模拟
 
+在运行模拟前，先批量生成 case 分析结果。
+
+例如预处理前 20 个 case：
+
+```bash
+python3 main.py analyze-cases --limit 20
+```
+
+或者只预处理指定 case：
+
+```bash
+python3 main.py analyze-cases --case_ids <真实案例ID_1> <真实案例ID_2>
+```
+
+这一步会输出：
+
+```text
+outputs/case_analysis_artifacts.jsonl
+```
+
+每一行是一条 case 的完整离线分析结果，包括：
+
+```text
+retrieval queries
+related cases
+verified points
+relations
+roadmap
+blind_user_view
+knowledge_module_view
+```
+
+后续 `simulate` 只读取这个文件，不再现场重新跑 retrieval / extraction / roadmap。
+
 基础命令：
 
 ```bash
@@ -273,15 +316,21 @@ User: 是打开以后就直接退出来了，还没到登录那一步。
 - LLM 判断 assistant 命中目标 solution；
 - 或达到最大轮数。
 
-## 10. simulate 内部做了什么
+## 10. analyze-cases 内部做了什么
 
 当运行：
 
 ```bash
-python3 main.py simulate --case_id <真实案例ID>
+python3 main.py analyze-cases --limit 20
 ```
 
-内部会按顺序执行以下步骤。
+或：
+
+```bash
+python3 main.py analyze-cases --case_ids <真实案例ID>
+```
+
+内部会按顺序为每个选中的 case 执行以下步骤。
 
 ### 10.1 读取真实案例库
 
@@ -460,9 +509,45 @@ forbidden_content
 outputs/roadmaps.jsonl
 ```
 
-roadmap 是后续对话的事实边界。
+同时写入总 artifact：
 
-### 10.8 Simulator.start
+```text
+outputs/case_analysis_artifacts.jsonl
+```
+
+这个文件是后续 `simulate` 的主要输入。它让在线模拟不需要每次重新跑 case analysis。
+
+## 11. simulate 内部做了什么
+
+当运行：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID>
+```
+
+simulate 只做 runtime 对话，不再现场执行 QueryGenerator / PointExtractor / RoadmapBuilder。
+
+它会先读取：
+
+```text
+outputs/case_analysis_artifacts.jsonl
+```
+
+找到对应 `case_id` 的预生成 artifact，并从里面拿到：
+
+```text
+roadmap
+blind_user_view
+knowledge_module_view
+```
+
+如果找不到该 case 的 artifact，程序会停止并提示你先运行：
+
+```bash
+python3 main.py analyze-cases --case_ids <真实案例ID>
+```
+
+### 11.1 Simulator.start
 
 文件：
 
@@ -476,7 +561,7 @@ src/runtime/simulator.py
 Blind User 用 LLM 根据 surface_problem、opening_intent、employee persona 生成第一句用户开场。
 ```
 
-### 10.9 Simulator.step
+### 11.2 Simulator.step
 
 每输入一轮 assistant 回复，都会执行：
 
@@ -517,7 +602,7 @@ state 怎么更新？
 outputs/simulation_logs.jsonl
 ```
 
-## 11. behavior mining 的结果如何进入 runtime
+## 12. behavior mining 的结果如何进入 runtime
 
 `mine-behavior` 产出的结果会在 simulate 时被读取：
 
@@ -526,7 +611,7 @@ outputs/employee_personas.jsonl
 outputs/user_behavior_taxonomy.jsonl
 ```
 
-### 11.1 进入 Knowledge Module
+### 12.1 进入 Knowledge Module
 
 Knowledge Module prompt 会看到 behavior taxonomy。
 
@@ -547,7 +632,7 @@ taxonomy 决定怎么反应
 roadmap 决定能说什么事实
 ```
 
-### 11.2 进入 Blind User
+### 12.2 进入 Blind User
 
 Blind User prompt 会看到 employee persona。
 
@@ -569,7 +654,7 @@ Blind User prompt 会看到 employee persona。
 
 但 Blind User 不能新增 allowed_content 之外的事实。
 
-## 12. runtime 优先级
+## 13. runtime 优先级
 
 runtime 中优先级是：
 
@@ -594,7 +679,7 @@ runtime 中优先级是：
 不能因为历史对话里用户经常补充很多信息，就说出 roadmap 不允许的 fact。
 ```
 
-## 13. 最推荐的完整命令顺序
+## 14. 最推荐的完整命令顺序
 
 进入项目：
 
@@ -614,7 +699,19 @@ python3 main.py mine-behavior --max_dialogues 20
 python3 main.py simulate --list_cases 20
 ```
 
-选择一个 case 跑模拟：
+批量分析前 20 个 case，生成可复用路书：
+
+```bash
+python3 main.py analyze-cases --limit 20
+```
+
+或者只分析指定 case：
+
+```bash
+python3 main.py analyze-cases --case_ids <真实案例ID>
+```
+
+选择一个已经分析过的 case 跑模拟：
 
 ```bash
 python3 main.py simulate --case_id <真实案例ID> --max_turns 8
@@ -638,7 +735,7 @@ python3 -m pytest tests
 python3 -m compileall .
 ```
 
-## 14. 关键边界
+## 15. 关键边界
 
 最重要的边界是：
 

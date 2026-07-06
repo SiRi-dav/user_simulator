@@ -84,6 +84,20 @@ class Roadmap(BaseModel):
     forbidden_content: List[str]
 
 
+class CaseAnalysisArtifact(BaseModel):
+    case_id: str
+    target_case: Case
+    retrieval_queries: List[RetrievalQuery]
+    related_cases: List[Case]
+    verified_points: List[Point]
+    dropped_points: List[Point]
+    warnings: List[str]
+    relations: List[Relation]
+    roadmap: Roadmap
+    blind_user_view: Dict[str, Any]
+    knowledge_module_view: Dict[str, Any]
+
+
 class DialogueState(BaseModel):
     turn_count: int = 0
     exposed_point_ids: List[str] = Field(default_factory=list)
