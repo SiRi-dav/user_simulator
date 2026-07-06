@@ -653,6 +653,15 @@ Blind User prompt 会看到 employee persona。
 
 它负责把 Knowledge Module 给出的 `allowed_content` 改写成自然表达。
 
+这里的 Blind User 不是机械复读 allowed_content。prompt 里已经明确写了：
+
+```text
+用户是真的想解决这个影响工作的 IT 问题；
+用户希望 assistant 帮忙诊断、给下一步、恢复工作；
+用户会配合相关追问，但不会编造事实；
+用户会根据 persona 表现出低技术、配合、急躁或模糊等风格。
+```
+
 例如同样的 allowed content：
 
 ```text

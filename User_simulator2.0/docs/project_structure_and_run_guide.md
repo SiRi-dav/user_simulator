@@ -566,6 +566,15 @@ step(assistant_text: str) -> Dict[str, Any]
 - `parse_assistant_act()`: 用 LLM 判断 assistant 回复类型
 - `render_reply()`: 根据 Knowledge Module instruction 生成自然语言回复
 
+Blind User prompt 会明确要求模拟用户带着真实解决问题的动机：
+
+- 用户不是闲聊，而是工作被 IT 问题影响，想尽快恢复；
+- 开场要体现“我希望你帮我解决/诊断/给下一步”；
+- 被追问时，如果 roadmap 允许，就补充有助于排障的信息；
+- 被要求操作时，如果 instruction 允许，就追问怎么做或表示会尝试；
+- assistant 问偏时，用户会把对话拉回自己的问题；
+- 但所有表达都不能突破 `allowed_content` 和 `forbidden_content`。
+
 Blind User 的限制：
 
 - 不直接看完整 solution
