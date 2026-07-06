@@ -1,0 +1,23 @@
+llm:
+  provider: "openai-compatible"
+  endpoint: "http://localhost:8850/v1/chat/completions"
+  base_url: ""
+  api_key: "EMPTY"
+  model: "qwen3-32b"
+  temperature: 0.2
+  max_tokens: 4096
+  timeout: 300
+  top_p: 0.5
+  presence_penalty: 1.5
+  top_k: 1
+  enable_thinking: false
+
+paths:
+  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+  output_dir: "outputs"
+
+case_fields:
+  case_id: "__key__"
+  title: "case_name"
+  phenomenon: "text"
+  solution: "text"

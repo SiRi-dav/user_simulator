@@ -1,0 +1,846 @@
+# User Simulator 2.0 项目结构与运行指南
+
+本文档说明 `User_simulator2.0` 当前版本的项目结构、各程序职责，以及如何运行 demo 和测试。
+
+## 1. 项目定位
+
+`User_simulator2.0` 是一个企业 IT 客服评测用的 LLM-based Knowledge-grounded User Simulator MVP。
+
+当前版本的核心原则是：不要做 rule-based MVP。所有核心判断、抽取、分类、匹配、决策和回复生成都通过 LLM 完成。
+
+目前 assistant 回复先由人工输入。User Simulator 侧仍然全流程走 LLM，包括：
+
+- related case retrieval query generation
+- related case selection
+- point extraction
+- point verification
+- relation building
+- roadmap assembly
+- initial user opening
+- assistant act parsing
+- knowledge decision
+- blind user reply rendering
+- solution matching
+
+## 2. 整体运行流程
+
+主入口是 `main.py`。
+
+完整流程如下：
+
+1. 读取 `config.yaml`
+2. 按 `config.yaml` 中的路径加载真实案例库
+3. 根据 `--case_id` 从真实案例库中选择 target case
+4. `QueryGenerator` 用 LLM 生成 related case 检索 query
+5. `RelatedCaseRetriever` 用 LLM 从候选 case 中选择 related cases
+6. `PointExtractor` 用 LLM 抽取 knowledge points
+7. `PointVerifier` 用 LLM 校验 points
+8. `RelationBuilder` 用 LLM 建立 point relations
+9. `RoadmapBuilder` 用 LLM 组装 roadmap
+10. `Simulator.start()` 用 LLM 生成初始用户发言
+11. 人工在命令行输入 assistant 回复
+12. `Simulator.step()` 串起：
+    - Blind User 解析 assistant act
+    - Knowledge Module 做知识决策
+    - Blind User 生成自然用户回复
+    - 更新 dialogue state
+    - 写入 simulation log
+13. 如果 LLM 判断已解决，或达到 `--max_turns`，对话结束
+
+## 3. 根目录文件
+
+### `main.py`
+
+命令行入口，负责串起完整 pipeline。
+
+主要职责：
+
+- 解析命令行参数
+- 读取配置
+- 初始化 LLM client
+- 加载 case 数据
+- 依次运行 retrieval、extraction、roadmap、runtime 阶段
+- 打印用户模拟器回复
+- 接收人工输入的 assistant 回复
+
+真实 assistant 的未来接入点也在这里：
+
+```python
+assistant_text = input("Assistant> ").strip()
+# Real assistant integration point:
+# Replace the manual input above with a call to your enterprise assistant.
+```
+
+后续接入真实 assistant 时，可以把这一行替换为：
+
+```python
+assistant_text = call_real_assistant(
+    user_text=simulator.dialogue_history[-1]["content"],
+    dialogue_history=simulator.dialogue_history,
+    config=config.get("assistant", {}),
+)
+print(f"Assistant> {assistant_text}")
+```
+
+### `config.yaml`
+
+配置 LLM 和路径。
+
+当前默认配置沿用之前项目的 qwen32b OpenAI-compatible 接入方式：
+
+```yaml
+llm:
+  provider: "openai-compatible"
+  endpoint: "http://localhost:8850/v1/chat/completions"
+  base_url: ""
+  api_key: "EMPTY"
+  model: "qwen3-32b"
+  temperature: 0.2
+  max_tokens: 4096
+  timeout: 300
+  top_p: 0.5
+  presence_penalty: 1.5
+  top_k: 1
+  enable_thinking: false
+```
+
+路径配置默认指向之前版本使用的真实案例库：
+
+```yaml
+paths:
+  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+  output_dir: "outputs"
+
+case_fields:
+  case_id: "__key__"
+  title: "case_name"
+  phenomenon: "text"
+  solution: "text"
+```
+
+这里的 `case_id` 不是替代案例库路径，而是在已经加载的案例库中选择目标案例。真实案例库通常是一个大文件，运行一次模拟必须指定“这次围绕哪个 target case”。
+
+### 案例库数据
+
+正式运行不使用项目内 sample case。案例库必须来自 `config.yaml` 的真实路径：
+
+```yaml
+paths:
+  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+```
+
+如果这个文件不存在，程序会直接报错，不会回退到样例数据。
+
+### `README.md`
+
+项目简要说明、运行命令和 outputs 解释。
+
+### `.gitignore`
+
+忽略 Python 缓存、pytest 缓存和运行产物。
+
+## 4. `src/schemas.py`
+
+这是项目的数据结构中心。所有 LLM 输出最终都要被 Pydantic schema 校验。
+
+主要 schema：
+
+### `Case`
+
+表示一个客服案例。
+
+字段：
+
+- `case_id`
+- `title`
+- `phenomenon`
+- `solution`
+
+### `RetrievalQuery`
+
+表示 LLM 生成的 related case 检索 query。
+
+字段：
+
+- `query_type`: `surface_query` / `diagnostic_query` / `solution_query`
+- `query`
+- `reason`
+
+### `Point`
+
+表示从 target case 和 related cases 中抽取出来的知识点。
+
+字段包括：
+
+- `point_id`
+- `source_case_id`
+- `content`
+- `source_field`
+- `source_quote`
+- `point_type`
+- `grounding_type`
+- `trigger`
+- `visibility`
+- `leakage_risk`
+- `reason`
+
+`point_type` 分四类：
+
+- `user_facing`: 用户能直接看到的表面问题
+- `diagnostic`: 被 assistant 追问后才释放的诊断信息
+- `solution`: 只用于 Knowledge Module 判断是否 solved，不能直接泄露给 Blind User
+- `external`: related cases 中的外部/混淆方向
+
+### `PointVerificationResult`
+
+表示 point 校验结果。
+
+字段：
+
+- `verified_points`
+- `dropped_points`
+- `warnings`
+
+### `Relation`
+
+表示 point 之间的关系。
+
+支持的关系包括：
+
+- `specifies`
+- `asks_for`
+- `supports_target`
+- `solution_addresses`
+- `similar_but_wrong`
+- `rules_out`
+- `out_of_scope`
+
+### `Roadmap`
+
+运行时使用的路线图。
+
+字段：
+
+- `target_case_id`
+- `surface_problem`
+- `opening_intent`
+- `user_facing_points`
+- `diagnostic_points`
+- `solution_points`
+- `external_points`
+- `relations`
+- `target_route`
+- `external_routes`
+- `forbidden_content`
+
+Blind User 不直接读取完整 roadmap。roadmap 主要给 Knowledge Module 使用。
+
+### `DialogueState`
+
+记录对话状态。
+
+字段：
+
+- `turn_count`
+- `exposed_point_ids`
+- `rejected_external_point_ids`
+- `action_request_count`
+- `how_to_check_count`
+- `max_how_to_check`
+- `solution_status`
+- `should_stop`
+- `stop_reason`
+
+注意：状态更新来自 LLM 返回的 `KnowledgeDecision.state_update`，不是程序用关键词规则判断出来的。
+
+### `AssistantAct`
+
+Blind User 对 assistant 回复类型的 LLM 分类结果。
+
+可能类型：
+
+- `clarification_question`
+- `action_request`
+- `solution_output`
+- `generic_advice`
+- `irrelevant`
+- `unknown`
+
+### `KnowledgeDecision`
+
+Knowledge Module 的核心输出。
+
+它决定：
+
+- assistant 命中了什么 scope
+- 是否匹配某个 point
+- 本轮决策是什么
+- Blind User 允许说什么
+- dialogue state 如何更新
+
+### `SimulationTurnLog`
+
+单轮对话日志。
+
+包含：
+
+- turn
+- assistant_text
+- assistant_act
+- knowledge_decision
+- user_reply
+- state
+
+## 5. LLM 接入层：`src/llm/`
+
+### `llm_client.py`
+
+定义统一 LLM 接口：
+
+```python
+class LLMClient(ABC):
+    def generate_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema_name: Optional[str] = None,
+        temperature: float = 0.2,
+    ) -> Dict[str, Any]:
+        ...
+```
+
+所有模块都只依赖这个接口，因此后续替换公司 LLM 时，不需要改业务模块。
+
+### `openai_compatible_client.py`
+
+真实 LLM client。
+
+职责：
+
+- 从 `config.yaml` 或环境变量读取 LLM 配置
+- 按 OpenAI-compatible `/chat/completions` 格式请求 qwen32b
+- 要求模型返回 JSON object
+- 从返回文本中提取 JSON
+
+支持环境变量：
+
+- `LLM_ENDPOINT`
+- `LLM_BASE_URL`
+- `LLM_API_KEY`
+- `LLM_MODEL`
+- `LLM_TEMPERATURE`
+
+### `mock_llm_client.py`
+
+测试专用 mock client。
+
+注意：正式运行不使用它。它只用于 `tests/`，保证测试可以在没有 qwen32b 服务的情况下跑通。
+
+## 6. 数据加载：`src/data_loader.py`
+
+提供两个函数：
+
+- `load_cases(path, case_fields)`: 读取 JSON / JSONL case 数据，并按字段映射转换为内部 `Case`
+- `get_case(cases, case_id)`: 根据 case_id 找 target case
+
+## 7. Retrieval 阶段：`src/retrieval/`
+
+### `query_generator.py`
+
+类：`QueryGenerator`
+
+核心方法：
+
+```python
+generate_queries(target_case: Case) -> List[RetrievalQuery]
+```
+
+职责：
+
+- 输入 target case
+- 用 LLM 生成 3 到 6 个 related case 检索 query
+- 输出 `RetrievalQuery`
+- 写入 `outputs/generated_queries.jsonl`
+
+### `related_case_retriever.py`
+
+类：`RelatedCaseRetriever`
+
+核心方法：
+
+```python
+retrieve(
+    target_case: Case,
+    queries: List[RetrievalQuery],
+    all_cases: List[Case],
+) -> List[Case]
+```
+
+职责：
+
+- 输入 target case、queries、候选 cases
+- 让 LLM 选择 related cases
+- 不用关键词规则判断 relatedness
+- 写入 `outputs/related_cases.jsonl`
+
+### `prompt_templates.py`
+
+放 retrieval 相关 prompt：
+
+- query generation prompt
+- related case selection prompt
+
+## 8. Extraction 阶段：`src/extraction/`
+
+### `point_extractor.py`
+
+类：`PointExtractor`
+
+核心方法：
+
+```python
+extract_points(
+    target_case: Case,
+    related_cases: List[Case],
+) -> List[Point]
+```
+
+职责：
+
+- 用 LLM 从 target case 和 related cases 中抽取 points
+- 生成四类 point：
+  - user_facing
+  - diagnostic
+  - solution
+  - external
+- 写入 `outputs/points.jsonl`
+
+### `point_verifier.py`
+
+类：`PointVerifier`
+
+核心方法：
+
+```python
+verify_points(
+    target_case: Case,
+    related_cases: List[Case],
+    points: List[Point],
+) -> PointVerificationResult
+```
+
+职责：
+
+- 用 LLM 检查 points 是否 grounded
+- 检查 solution 是否可能泄露
+- 检查 external point 是否覆盖 target point
+- 输出 verified / dropped / warnings
+- 写入 `outputs/verified_points.jsonl`
+
+### `prompt_templates.py`
+
+放 extraction 相关 prompt：
+
+- point extraction prompt
+- point verification prompt
+
+## 9. Roadmap 阶段：`src/roadmap/`
+
+### `relation_builder.py`
+
+类：`RelationBuilder`
+
+核心方法：
+
+```python
+build_relations(points: List[Point], case_id: str = "") -> List[Relation]
+```
+
+职责：
+
+- 用 LLM 建立 point 之间的关系
+- 输出最小但有用的 relation set
+- 写入 `outputs/relations.jsonl`
+
+### `roadmap_builder.py`
+
+类：`RoadmapBuilder`
+
+核心方法：
+
+```python
+build_roadmap(
+    target_case: Case,
+    points: List[Point],
+    relations: List[Relation],
+) -> Roadmap
+```
+
+职责：
+
+- 用 LLM 将 verified points 和 relations 组装为 roadmap
+- 生成 surface problem、opening intent、target route、external routes、forbidden content
+- 写入 `outputs/roadmaps.jsonl`
+
+### `prompt_templates.py`
+
+放 roadmap 相关 prompt：
+
+- relation building prompt
+- roadmap assembly prompt
+
+## 10. Runtime 阶段：`src/runtime/`
+
+### `simulator.py`
+
+类：`Simulator`
+
+核心方法：
+
+```python
+start() -> str
+step(assistant_text: str) -> Dict[str, Any]
+```
+
+职责：
+
+- 保存 dialogue history
+- 保存 dialogue state
+- 调用 Blind User 和 Knowledge Module
+- 每轮生成用户回复
+- 写入 `outputs/simulation_logs.jsonl`
+
+`step()` 内部流程：
+
+1. 记录 assistant 最新回复
+2. `BlindUser.parse_assistant_act()` 用 LLM 分类 assistant act
+3. `KnowledgeModule.decide()` 用 LLM 做知识匹配和行为决策
+4. `BlindUser.render_reply()` 用 LLM 生成自然用户回复
+5. 应用 LLM 返回的 state update
+6. 写 turn log
+
+### `blind_user.py`
+
+类：`BlindUser`
+
+职责：
+
+- `initial_reply()`: 用 LLM 生成初始用户开场
+- `parse_assistant_act()`: 用 LLM 判断 assistant 回复类型
+- `render_reply()`: 根据 Knowledge Module instruction 生成自然语言回复
+
+Blind User 的限制：
+
+- 不直接看完整 solution
+- 不直接判断 solution 是否正确
+- 不决定释放哪个 fact
+- 只使用 Knowledge Module 给的 `allowed_content`
+
+### `knowledge_module.py`
+
+类：`KnowledgeModule`
+
+职责：
+
+- 读取 roadmap、state、persona、dialogue history
+- 用 LLM 判断 assistant 回复命中：
+  - `case_internal`
+  - `case_external`
+  - `out_of_knowledge`
+  - `target_solution`
+  - `generic`
+  - `unknown`
+- 用 LLM 决定：
+  - reveal fact
+  - clarify or deny
+  - ask how to perform
+  - confirm and stop
+  - continue
+  - impatient stop
+- 返回 `KnowledgeDecision`
+
+### `dialogue_state.py`
+
+导出 `DialogueState`。
+
+### `prompt_templates.py`
+
+放 runtime 相关 prompt：
+
+- assistant act parsing
+- knowledge decision
+- blind user reply rendering
+- initial user opening
+
+## 11. 工具层：`src/utils/`
+
+### `json_utils.py`
+
+职责：
+
+- 从 LLM 返回文本中提取 JSON object
+- 提供 JSON dump 工具
+
+### `jsonl.py`
+
+职责：
+
+- 读取 JSONL
+- 写入 JSONL
+- 追加 JSONL
+
+### `logging.py`
+
+类：`OutputLogger`
+
+职责：
+
+- 将每个模块的 input/output 统一写入 `outputs/*.jsonl`
+- 每条记录包含：
+  - `case_id`
+  - `module`
+  - `input`
+  - `output`
+  - `timestamp`
+
+## 12. Assistant 接入预留：`src/assistant/`
+
+当前 `src/assistant/` 只保留包结构，没有真实实现。
+
+目前 assistant 回复由命令行人工输入：
+
+```text
+Assistant>
+```
+
+后续接入真实 assistant 时，推荐在 `src/assistant/` 下新增一个 client，例如：
+
+```text
+src/assistant/enterprise_assistant_client.py
+```
+
+然后在 `main.py` 的 runtime loop 中替换人工输入。
+
+## 13. Outputs
+
+运行时会生成或追加以下文件：
+
+### `outputs/generated_queries.jsonl`
+
+保存 reverse RAG query generation 的输入输出。
+
+### `outputs/related_cases.jsonl`
+
+保存 related case selection 的输入输出。
+
+### `outputs/points.jsonl`
+
+保存 point extraction 的输入输出。
+
+### `outputs/verified_points.jsonl`
+
+保存 point verification 的输入输出。
+
+### `outputs/relations.jsonl`
+
+保存 relation building 的输入输出。
+
+### `outputs/roadmaps.jsonl`
+
+保存 roadmap assembly 的输入输出。
+
+### `outputs/simulation_logs.jsonl`
+
+保存每一轮 runtime 对话日志。
+
+## 14. Tests
+
+测试目录：
+
+```text
+tests/
+  test_point_extraction.py
+  test_roadmap_builder.py
+  test_runtime.py
+```
+
+测试使用 `MockLLMClient`，不依赖真实 qwen32b 服务。
+
+测试覆盖：
+
+- LLM 输出能被 Pydantic schema parse
+- PointExtractor 返回四类 point
+- PointVerifier 返回 verified points
+- RoadmapBuilder 生成 surface problem 和 target route
+- Simulator.step 能串起 assistant act、knowledge decision、blind user reply
+- solved 状态下 `should_stop == true`
+
+## 15. 如何运行
+
+进入项目目录：
+
+```bash
+cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
+```
+
+确认 qwen32b 服务已经启动，并且 `config.yaml` 中 endpoint 正确：
+
+```yaml
+endpoint: "http://localhost:8850/v1/chat/completions"
+model: "qwen3-32b"
+```
+
+确认 `config.yaml` 中案例库路径正确：
+
+```yaml
+paths:
+  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+```
+
+运行 demo，其中 `--case_id` 要换成真实案例库里的案例 ID：
+
+```bash
+python3 main.py --case_id <真实案例ID> --persona low_tech
+```
+
+如果不知道真实案例库里有哪些 ID，可以先列出前 20 条：
+
+```bash
+python3 main.py --list_cases 20
+```
+
+可选 persona：
+
+```text
+low_tech
+cooperative
+impatient
+vague
+```
+
+指定最大轮数：
+
+```bash
+python3 main.py --case_id <真实案例ID> --persona low_tech --max_turns 8
+```
+
+运行后，程序会先生成用户开场：
+
+```text
+User: 我这边 Outlook 一打开就退出来了，帮我看一下。
+Assistant>
+```
+
+你在 `Assistant>` 后人工输入 assistant 回复：
+
+```text
+Assistant> 是登录不上还是打开就退出？
+```
+
+程序会继续生成用户回复：
+
+```text
+User: 是打开以后就直接退出来了，还没到登录那一步。
+```
+
+如果 assistant 给出正确方案，Knowledge Module 判断 solved 后会结束：
+
+```text
+Assistant> 你可以先结束 Outlook 的残留进程再重新打开。
+User: 好的，那我按这个方法试一下。
+[STOP: solved]
+```
+
+## 16. 如何运行测试
+
+进入项目目录：
+
+```bash
+cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
+```
+
+运行：
+
+```bash
+python3 -m pytest tests
+```
+
+编译检查：
+
+```bash
+python3 -m compileall .
+```
+
+## 17. 常见问题
+
+### 1. `python` 命令不存在
+
+使用：
+
+```bash
+python3 main.py --case_id <真实案例ID> --persona low_tech
+```
+
+### 2. 连接不上 qwen32b
+
+检查：
+
+- qwen32b 服务是否启动
+- `config.yaml` 里的 endpoint 是否正确
+- 是否需要设置 `LLM_ENDPOINT`
+- 端口是否是 `8850`
+
+### 3. LLM 返回不是合法 JSON
+
+当前所有模块都要求 LLM 返回 JSON。如果失败，优先检查对应模块的 `prompt_templates.py`。
+
+也可以查看 `outputs/` 中前一步是否已经成功写入。
+
+### 4. 用户回复泄露 solution
+
+检查：
+
+- extraction prompt 中 solution point 是否设为 `judge_only`
+- verification prompt 是否给出 warning
+- roadmap 的 `forbidden_content`
+- runtime knowledge decision prompt 是否遵守 forbidden content
+
+## 18. 后续扩展建议
+
+### 接入真实 assistant
+
+推荐新增：
+
+```text
+src/assistant/enterprise_assistant_client.py
+```
+
+并在 `main.py` 的 runtime loop 中替换人工输入。
+
+### 修改真实 case 数据路径
+
+在 `config.yaml` 中修改：
+
+```yaml
+paths:
+  cases: "your_real_case_file.json_or_jsonl"
+```
+
+### 加入 Dialogue Behavior Miner
+
+历史对话分析模块后续可以独立加入，用于分析：
+
+- 真实用户通常怎么开场
+- 真实用户主动说哪些信息
+- 哪些信息通常被追问后才说
+- 用户遇到问偏时怎么反应
+- 用户是否追问操作方法
+- low_tech 用户会卡在哪里
+- 一轮、两轮、三轮后用户一般补充什么
+
+这些结果未来可以影响：
+
+- surface problem prompt
+- information release prompt
+- action request policy
+- persona behavior policy
