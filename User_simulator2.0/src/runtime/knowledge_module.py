@@ -19,6 +19,7 @@ class KnowledgeModule:
         roadmap: Roadmap,
         state: DialogueState,
         persona: Dict[str, Any],
+        behavior_taxonomy: List[Dict[str, Any]],
         dialogue_history: List[Dict[str, str]],
     ) -> KnowledgeDecision:
         user_prompt = KNOWLEDGE_DECISION_USER.format(
@@ -27,6 +28,7 @@ class KnowledgeModule:
             roadmap_json=dumps_json(model_to_dict(roadmap)),
             state_json=dumps_json(model_to_dict(state)),
             persona_json=dumps_json(persona),
+            behavior_taxonomy_json=dumps_json(model_to_dict(behavior_taxonomy)),
             dialogue_history_json=dumps_json(dialogue_history),
         )
         payload = self.llm_client.generate_json(KNOWLEDGE_DECISION_SYSTEM, user_prompt, schema_name="KnowledgeDecision")

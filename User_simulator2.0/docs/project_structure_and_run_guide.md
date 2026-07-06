@@ -47,6 +47,18 @@
     - 写入 simulation log
 13. 如果 LLM 判断已解决，或达到 `--max_turns`，对话结束
 
+历史对话行为挖掘是一个独立前置流程：
+
+1. 按 `config.yaml` 中的真实历史对话路径加载 dialogue logs
+2. 对每条 dialogue 用 LLM 生成 `DialogueBehaviorSummary`
+3. 汇总 summaries 后用 LLM 挖掘 `EmployeePersona`
+4. 汇总 summaries 后用 LLM 挖掘 `BehaviorTaxonomy`
+5. 写入 `outputs/dialogue_behavior_summaries.jsonl`
+6. 写入 `outputs/employee_personas.jsonl`
+7. 写入 `outputs/user_behavior_taxonomy.jsonl`
+
+注意：历史对话只负责总结用户行为结构，不参与 target case 的知识点抽取，也不生成 roadmap。
+
 ## 3. 根目录文件
 
 ### `main.py`
@@ -116,6 +128,15 @@ case_fields:
   title: "case_name"
   phenomenon: "text"
   solution: "text"
+
+dialogue_fields:
+  dialogue_id: "__key__"
+  case_id: "caseId"
+  final_case_id: "final_case_id"
+  resolved: "resolved"
+  turns: "text"
+  speaker: "speaker"
+  text: "text"
 ```
 
 这里的 `case_id` 不是替代案例库路径，而是在已经加载的案例库中选择目标案例。真实案例库通常是一个大文件，运行一次模拟必须指定“这次围绕哪个 target case”。
@@ -621,7 +642,113 @@ src/assistant/enterprise_assistant_client.py
 
 然后在 `main.py` 的 runtime loop 中替换人工输入。
 
-## 13. Outputs
+## 13. Behavior Mining 阶段：`src/behavior_mining/`
+
+这个模块用于从历史对话中学习真实公司员工用户行为。
+
+它不参与：
+
+- target case 选择
+- related case retrieval
+- point extraction
+- roadmap assembly
+- solution 判断
+
+它只产出行为侧资产：
+
+- Employee Persona Library
+- User Behavior Taxonomy
+- Dialogue Behavior Summaries
+
+### `dialogue_loader.py`
+
+负责加载历史对话。
+
+支持：
+
+- JSONL，每行一个 dialogue
+- JSON list
+- keyed JSON dict
+- 旧项目中类似 `text` 字段的角色前缀对话
+
+输出内部 schema：
+
+```python
+HistoricalDialogue
+```
+
+字段包括：
+
+- `dialogue_id`
+- `case_id`
+- `final_case_id`
+- `resolved`
+- `turns`
+
+### `behavior_miner.py`
+
+总控类：`DialogueBehaviorMiner`
+
+核心流程：
+
+1. `summarize_dialogue()` 对每条 dialogue 调 LLM，生成 `DialogueBehaviorSummary`
+2. `PersonaMiner` 汇总 summaries，生成 `EmployeePersona`
+3. `BehaviorTaxonomyMiner` 汇总 summaries，生成 `BehaviorTaxonomy`
+4. 写入三个 outputs 文件
+
+### `persona_miner.py`
+
+类：`PersonaMiner`
+
+职责：
+
+- 从多个 dialogue summaries 中总结真实员工 persona
+- 输出 3 到 6 类常见员工画像
+- persona 必须有 dialogue evidence 支撑
+
+输出 schema：
+
+```python
+EmployeePersona
+```
+
+### `behavior_taxonomy_miner.py`
+
+类：`BehaviorTaxonomyMiner`
+
+职责：
+
+- 从历史对话中总结用户行为分类
+- 关注用户面对不同 assistant act 时的反应
+
+典型行为包括：
+
+- answer_fact
+- reveal_new_fact
+- ask_how_to_perform
+- attempt_action
+- deny_or_correct
+- say_unknown
+- accept_solution
+- reject_solution
+- express_frustration
+- repeat_surface_problem
+
+输出 schema：
+
+```python
+BehaviorTaxonomy
+```
+
+### `prompt_templates.py`
+
+放 behavior mining 相关 prompt：
+
+- single dialogue behavior summary
+- persona mining
+- behavior taxonomy mining
+
+## 14. Outputs
 
 运行时会生成或追加以下文件：
 
@@ -653,12 +780,41 @@ src/assistant/enterprise_assistant_client.py
 
 保存每一轮 runtime 对话日志。
 
-## 14. Tests
+### `outputs/dialogue_behavior_summaries.jsonl`
+
+保存每条历史对话的行为结构化总结。
+
+### `outputs/employee_personas.jsonl`
+
+保存从历史对话中挖掘出的真实员工 persona library。
+
+### `outputs/user_behavior_taxonomy.jsonl`
+
+保存从历史对话中挖掘出的用户行为分类与 simulator policy hint。
+
+## 15. Runtime 行为优先级
+
+runtime 中不同信息源的优先级如下：
+
+1. Roadmap / Knowledge Module factual constraint 最高，决定 allowed_content，防止泄露 solution。
+2. Dialogue State 第二，决定是否已经说过、是否重复追问、是否超过 patience。
+3. Behavior Taxonomy 第三，决定面对追问、动作要求、方案输出时采用哪类行为。
+4. Employee Persona 第四，决定表达风格和自然语言难度。
+
+因此：
+
+- 不能因为 persona 是 cooperative，就泄露 roadmap 不允许的 fact。
+- 不能因为 taxonomy 里用户会主动补充，就说出 forbidden content。
+- case / related cases 负责知识结构。
+- historical dialogues 只负责行为结构。
+
+## 16. Tests
 
 测试目录：
 
 ```text
 tests/
+  test_behavior_mining.py
   test_point_extraction.py
   test_roadmap_builder.py
   test_runtime.py
@@ -674,8 +830,9 @@ tests/
 - RoadmapBuilder 生成 surface problem 和 target route
 - Simulator.step 能串起 assistant act、knowledge decision、blind user reply
 - solved 状态下 `should_stop == true`
+- DialogueBehaviorMiner 能产出 summaries、personas、taxonomy 三类文件
 
-## 15. 如何运行
+## 17. 如何运行
 
 进入项目目录：
 
@@ -695,18 +852,43 @@ model: "qwen3-32b"
 ```yaml
 paths:
   cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+  dialogues: "../../RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json"
+```
+
+先运行历史对话行为挖掘：
+
+```bash
+python3 main.py mine-behavior
+```
+
+如果要指定历史对话文件：
+
+```bash
+python3 main.py mine-behavior --dialogues /path/to/dialogues.jsonl --max_dialogues 50
 ```
 
 运行 demo，其中 `--case_id` 要换成真实案例库里的案例 ID：
 
 ```bash
-python3 main.py --case_id <真实案例ID> --persona low_tech
+python3 main.py simulate --case_id <真实案例ID> --persona low_tech
+```
+
+如果已经挖掘出 employee personas，可以指定：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
+```
+
+兼容旧命令：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --persona low_tech
 ```
 
 如果不知道真实案例库里有哪些 ID，可以先列出前 20 条：
 
 ```bash
-python3 main.py --list_cases 20
+python3 main.py simulate --list_cases 20
 ```
 
 可选 persona：
@@ -721,7 +903,7 @@ vague
 指定最大轮数：
 
 ```bash
-python3 main.py --case_id <真实案例ID> --persona low_tech --max_turns 8
+python3 main.py simulate --case_id <真实案例ID> --persona low_tech --max_turns 8
 ```
 
 运行后，程序会先生成用户开场：
@@ -751,7 +933,7 @@ User: 好的，那我按这个方法试一下。
 [STOP: solved]
 ```
 
-## 16. 如何运行测试
+## 18. 如何运行测试
 
 进入项目目录：
 
@@ -771,7 +953,7 @@ python3 -m pytest tests
 python3 -m compileall .
 ```
 
-## 17. 常见问题
+## 19. 常见问题
 
 ### 1. `python` 命令不存在
 
@@ -805,7 +987,7 @@ python3 main.py --case_id <真实案例ID> --persona low_tech
 - roadmap 的 `forbidden_content`
 - runtime knowledge decision prompt 是否遵守 forbidden content
 
-## 18. 后续扩展建议
+## 20. 后续扩展建议
 
 ### 接入真实 assistant
 

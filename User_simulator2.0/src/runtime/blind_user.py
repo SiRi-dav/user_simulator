@@ -19,11 +19,18 @@ class BlindUser:
     def __init__(self, llm_client: LLMClient):
         self.llm_client = llm_client
 
-    def initial_reply(self, surface_problem: str, opening_intent: str, persona: Dict[str, Any]) -> str:
+    def initial_reply(
+        self,
+        surface_problem: str,
+        opening_intent: str,
+        persona: Dict[str, Any],
+        employee_persona: Dict[str, Any] | None = None,
+    ) -> str:
         user_prompt = INITIAL_USER_USER.format(
             surface_problem=surface_problem,
             opening_intent=opening_intent,
             persona_json=dumps_json(persona),
+            employee_persona_json=dumps_json(employee_persona or {}),
         )
         payload = self.llm_client.generate_json(INITIAL_USER_SYSTEM, user_prompt, schema_name="InitialUserReply")
         return str(payload["reply"])
@@ -40,12 +47,16 @@ class BlindUser:
         self,
         instruction: BlindUserInstruction,
         persona: Dict[str, Any],
+        employee_persona: Dict[str, Any] | None,
+        behavior_policy: List[Dict[str, Any]],
         surface_problem: str,
         dialogue_history: List[Dict[str, str]],
     ) -> str:
         user_prompt = BLIND_USER_REPLY_USER.format(
             surface_problem=surface_problem,
             persona_json=dumps_json(persona),
+            employee_persona_json=dumps_json(employee_persona or {}),
+            behavior_policy_json=dumps_json(model_to_dict(behavior_policy)),
             instruction_json=dumps_json(model_to_dict(instruction)),
             dialogue_history_json=dumps_json(dialogue_history),
         )

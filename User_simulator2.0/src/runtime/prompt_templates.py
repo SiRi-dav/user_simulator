@@ -43,6 +43,8 @@ Dialogue state:
 {state_json}
 Persona:
 {persona_json}
+Historical user behavior taxonomy:
+{behavior_taxonomy_json}
 Dialogue history:
 {dialogue_history_json}
 Decide the next user behavior.
@@ -67,6 +69,8 @@ Behavior rules:
 2. If assistant_act is action_request, decide whether the user should ask how to perform it, attempt it, or redirect.
 3. If assistant_act is solution_output, compare assistant reply with solution_points.
 4. Never put judge-only solution text into allowed_content unless the assistant has already provided the matching solution and the user is confirming.
+5. Use the historical behavior taxonomy only to choose the reaction style. Roadmap factual constraints have higher priority than behavior taxonomy.
+6. Do not reveal any fact that is not allowed by the roadmap, even if the taxonomy suggests users often volunteer details.
 Return JSON:
 {{
   "assistant_act": "...",
@@ -108,6 +112,10 @@ BLIND_USER_REPLY_USER = """Surface problem:
 {surface_problem}
 Persona:
 {persona_json}
+Employee persona:
+{employee_persona_json}
+Behavior policy:
+{behavior_policy_json}
 Knowledge Module instruction:
 {instruction_json}
 Dialogue history:
@@ -120,6 +128,8 @@ Return JSON:
 Requirements:
 - Use only allowed_content.
 - Do not include forbidden_content.
+- Use employee persona and behavior policy only to shape wording and reaction style.
+- Do not add facts from employee persona or behavior policy.
 - If persona is low_tech, wording can be less technical and may ask for help if instructed.
 - If persona is impatient, sound slightly impatient when appropriate.
 - If persona is cooperative, answer directly and politely.
@@ -138,6 +148,8 @@ Opening intent:
 {opening_intent}
 Persona:
 {persona_json}
+Employee persona:
+{employee_persona_json}
 Generate the user's first message.
 Return JSON:
 {{

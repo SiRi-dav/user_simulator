@@ -152,4 +152,67 @@ class MockLLMClient(LLMClient):
         if schema_name == "BlindUserReply":
             solved = "好的，那我按这个方法试一下" in user_prompt
             return {"reply": "好的，那我按这个方法试一下。" if solved else "是打开以后就直接退出来了，还没到登录那一步。"}
+        if schema_name == "DialogueBehaviorSummary":
+            return {
+                "dialogue_id": "DIALOG_001",
+                "opening_pattern": "用户先描述表面故障，信息较简短",
+                "user_persona_guess": "低技术但配合的员工",
+                "observed_behaviors": [
+                    {
+                        "dialogue_id": "DIALOG_001",
+                        "turn_index": 1,
+                        "assistant_act": "clarification_question",
+                        "user_behavior": "reveal_new_fact",
+                        "user_text": "是打开以后就直接退出来了，还没到登录那一步。",
+                        "assistant_text": "是登录不上还是打开就退出？",
+                        "released_information_type": "diagnostic_fact",
+                        "behavior_reason": "用户在追问后补充退出时机",
+                    }
+                ],
+                "voluntary_information": ["Outlook 打不开，一点开就退出来"],
+                "ask_triggered_information": ["还没到登录那一步"],
+                "action_request_reactions": [],
+                "offtrack_reactions": [],
+                "solution_reactions": ["方案具体时表示愿意尝试"],
+                "summary": "该用户开场简短，被追问后能补充关键诊断信息。",
+            }
+        if schema_name == "EmployeePersonas":
+            return {
+                "personas": [
+                    {
+                        "persona_id": "persona_low_tech_cooperative",
+                        "persona_name": "低技术但配合的员工",
+                        "description": "不熟悉技术术语，但愿意按客服问题补充信息。",
+                        "technical_literacy": "low",
+                        "patience_level": "medium",
+                        "clarity_level": "medium",
+                        "cooperation_level": "high",
+                        "typical_opening_style": ["先说表面问题，细节有限"],
+                        "information_release_style": "被追问后释放诊断事实",
+                        "action_request_behavior": "会追问一次怎么操作，再尝试执行",
+                        "offtrack_reaction_style": "用自身现象轻微纠正",
+                        "solution_acceptance_style": "方案具体时会接受并表示尝试",
+                        "evidence_dialogue_ids": ["DIALOG_001"],
+                        "reason": "mock persona for tests",
+                    }
+                ]
+            }
+        if schema_name == "BehaviorTaxonomy":
+            return {
+                "behavior_taxonomy": [
+                    {
+                        "behavior_name": "追问后补充诊断事实",
+                        "definition": "assistant 追问区分信息后，用户提供新的故障细节。",
+                        "trigger_assistant_acts": ["clarification_question"],
+                        "typical_user_response_patterns": ["补充错误时机", "说明是否出现登录页"],
+                        "persona_sensitivity": {
+                            "low_tech": "可能用非技术语言描述",
+                            "impatient": "回答更短",
+                            "cooperative": "较完整回答",
+                            "vague": "只给部分信息",
+                        },
+                        "simulator_policy_hint": "在 roadmap 允许时释放一个 ask_triggered diagnostic fact。",
+                    }
+                ]
+            }
         return {}

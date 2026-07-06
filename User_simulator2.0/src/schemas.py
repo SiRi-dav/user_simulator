@@ -12,6 +12,19 @@ class Case(BaseModel):
     solution: str
 
 
+class DialogueTurn(BaseModel):
+    speaker: str
+    text: str
+
+
+class HistoricalDialogue(BaseModel):
+    dialogue_id: str
+    case_id: Optional[str] = None
+    final_case_id: Optional[str] = None
+    resolved: Optional[bool] = None
+    turns: List[DialogueTurn]
+
+
 class RetrievalQuery(BaseModel):
     query_type: str
     query: str
@@ -115,6 +128,56 @@ class SimulationTurnLog(BaseModel):
     knowledge_decision: KnowledgeDecision
     user_reply: str
     state: DialogueState
+
+
+class EmployeePersona(BaseModel):
+    persona_id: str
+    persona_name: str
+    description: str
+    technical_literacy: str
+    patience_level: str
+    clarity_level: str
+    cooperation_level: str
+    typical_opening_style: List[str]
+    information_release_style: str
+    action_request_behavior: str
+    offtrack_reaction_style: str
+    solution_acceptance_style: str
+    evidence_dialogue_ids: List[str]
+    reason: str
+
+
+class UserBehaviorEvent(BaseModel):
+    dialogue_id: str
+    turn_index: int
+    assistant_act: str
+    user_behavior: str
+    user_text: str
+    assistant_text: str
+    released_information_type: Optional[str]
+    behavior_reason: str
+
+
+class BehaviorTaxonomy(BaseModel):
+    behavior_name: str
+    definition: str
+    trigger_assistant_acts: List[str]
+    typical_user_response_patterns: List[str]
+    persona_sensitivity: Dict[str, str]
+    simulator_policy_hint: str
+
+
+class DialogueBehaviorSummary(BaseModel):
+    dialogue_id: str
+    opening_pattern: str
+    user_persona_guess: str
+    observed_behaviors: List[UserBehaviorEvent]
+    voluntary_information: List[str]
+    ask_triggered_information: List[str]
+    action_request_reactions: List[str]
+    offtrack_reactions: List[str]
+    solution_reactions: List[str]
+    summary: str
 
 
 def model_to_dict(value: Any) -> Any:

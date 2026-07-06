@@ -17,9 +17,13 @@ class Simulator:
         persona: Dict[str, Any],
         llm_client: LLMClient,
         logger: OutputLogger | None = None,
+        employee_persona: Dict[str, Any] | None = None,
+        behavior_taxonomy: List[Dict[str, Any]] | None = None,
     ):
         self.roadmap = roadmap
         self.persona = persona
+        self.employee_persona = employee_persona or {}
+        self.behavior_taxonomy = behavior_taxonomy or []
         self.llm_client = llm_client
         self.blind_user = BlindUser(llm_client)
         self.knowledge_module = KnowledgeModule(llm_client)
@@ -28,7 +32,12 @@ class Simulator:
         self.logger = logger or OutputLogger(Path("outputs"))
 
     def start(self) -> str:
-        reply = self.blind_user.initial_reply(self.roadmap.surface_problem, self.roadmap.opening_intent, self.persona)
+        reply = self.blind_user.initial_reply(
+            self.roadmap.surface_problem,
+            self.roadmap.opening_intent,
+            self.persona,
+            self.employee_persona,
+        )
         self.dialogue_history.append({"role": "user", "content": reply})
         return reply
 
@@ -41,11 +50,14 @@ class Simulator:
             self.roadmap,
             self.state,
             self.persona,
+            self.behavior_taxonomy,
             self.dialogue_history,
         )
         user_reply = self.blind_user.render_reply(
             decision.instruction,
             self.persona,
+            self.employee_persona,
+            self.behavior_taxonomy,
             self.roadmap.surface_problem,
             self.dialogue_history,
         )

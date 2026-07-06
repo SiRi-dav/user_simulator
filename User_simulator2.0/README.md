@@ -28,6 +28,7 @@ This version intentionally avoids rule-based judging, extraction, matching, and 
 - solution matching
 - blind user natural language rendering
 - initial user opening
+- historical dialogue behavior mining
 
 The current priority is not perfect prompt accuracy. The priority is validating that a fully LLM-driven modular pipeline can run end to end with JSON outputs, Pydantic validation, and saved intermediate artifacts.
 
@@ -47,7 +48,7 @@ The client is OpenAI-compatible and calls `/chat/completions`.
 
 ```bash
 cd User_simulator2.0
-python main.py --case_id <真实案例ID> --persona low_tech
+python main.py simulate --case_id <真实案例ID> --persona low_tech
 ```
 
 Case data is loaded from the configured real case library path in `config.yaml`. `case_id` is only the target-case selector inside that library, not a replacement for the case library path.
@@ -56,6 +57,12 @@ To inspect available case ids first:
 
 ```bash
 python main.py --list_cases 20
+```
+
+Legacy direct invocation is still supported:
+
+```bash
+python main.py --case_id <真实案例ID> --persona low_tech
 ```
 
 Assistant replies are entered manually for now. The intended real-assistant integration point is marked in `main.py` inside the runtime loop, where `assistant_text = input(...)` currently lives.
@@ -73,6 +80,50 @@ User: 好的，那我按这个方法试一下。
 [STOP: solved]
 ```
 
+## Historical Dialogue Behavior Mining
+
+Historical dialogues are used to learn user behavior, not to generate case knowledge or replace the roadmap.
+
+Run:
+
+```bash
+python main.py mine-behavior
+```
+
+By default, the command reads the real historical dialogue path from `config.yaml`:
+
+```yaml
+paths:
+  dialogues: "../../RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json"
+```
+
+You can override the path:
+
+```bash
+python main.py mine-behavior --dialogues /path/to/dialogues.jsonl --max_dialogues 50
+```
+
+It writes:
+
+- `outputs/dialogue_behavior_summaries.jsonl`
+- `outputs/employee_personas.jsonl`
+- `outputs/user_behavior_taxonomy.jsonl`
+
+Runtime priority:
+
+1. Roadmap and Knowledge Module factual constraints decide what content is allowed.
+2. Dialogue state decides repetition, patience, and stop state.
+3. Behavior taxonomy decides reaction type.
+4. Employee persona shapes natural wording.
+
+Simulation can use mined personas:
+
+```bash
+python main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
+```
+
+If `--persona_id` is omitted and `outputs/employee_personas.jsonl` exists, the first mined persona is used. If no mined persona exists, the built-in `--persona` value is used.
+
 ## Outputs
 
 All intermediate results are saved as JSONL records under `outputs/`.
@@ -84,6 +135,9 @@ All intermediate results are saved as JSONL records under `outputs/`.
 - `relations.jsonl`: point relations
 - `roadmaps.jsonl`: assembled roadmaps
 - `simulation_logs.jsonl`: runtime turn logs
+- `dialogue_behavior_summaries.jsonl`: per-dialogue behavior summaries
+- `employee_personas.jsonl`: mined employee persona library
+- `user_behavior_taxonomy.jsonl`: mined user behavior taxonomy
 
 Each record contains `case_id`, `module`, `input`, `output`, and `timestamp`.
 
@@ -95,8 +149,4 @@ Tests use `MockLLMClient` only as a deterministic test double:
 python -m pytest tests
 ```
 
-## Future: Dialogue Behavior Miner
-
-Historical dialogue mining is reserved for a later module named Dialogue Behavior Miner. It will analyze how real users open conversations, what they reveal proactively, what they reveal only after being asked, how they react to off-track questions, whether they ask for operation guidance, where low-tech users get stuck, and what they add after one, two, or three turns.
-
-Those results will later affect surface problem prompts, information release prompts, action request policy, and persona behavior policy.
+Historical behavior outputs are product files rather than wrapped step logs, so each JSONL line is a persona, taxonomy item, or dialogue summary.

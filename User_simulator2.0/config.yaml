@@ -14,6 +14,7 @@ llm:
 
 paths:
   cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
+  dialogues: "../../RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json"
   output_dir: "outputs"
 
 case_fields:
@@ -21,3 +22,12 @@ case_fields:
   title: "case_name"
   phenomenon: "text"
   solution: "text"
+
+dialogue_fields:
+  dialogue_id: "__key__"
+  case_id: "caseId"
+  final_case_id: "final_case_id"
+  resolved: "resolved"
+  turns: "text"
+  speaker: "speaker"
+  text: "text"

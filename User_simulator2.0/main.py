@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from src.behavior_mining.behavior_miner import DialogueBehaviorMiner
+from src.behavior_mining.dialogue_loader import load_dialogues
 from src.data_loader import get_case, load_cases
 from src.extraction.point_extractor import PointExtractor
 from src.extraction.point_verifier import PointVerifier
@@ -13,6 +16,8 @@ from src.retrieval.related_case_retriever import RelatedCaseRetriever
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.simulator import Simulator
+from src.schemas import BehaviorTaxonomy, EmployeePersona, model_to_dict
+from src.utils.jsonl import read_jsonl
 from src.utils.logging import OutputLogger
 
 
@@ -25,23 +30,90 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LLM-based Knowledge-grounded User Simulator MVP")
-    parser.add_argument("--case_id")
-    parser.add_argument("--persona", default="low_tech", choices=sorted(PERSONAS))
-    parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--max_turns", type=int, default=6)
-    parser.add_argument("--list_cases", type=int, default=0, help="List the first N cases from the configured case library and exit.")
+    parser = build_parser()
     args = parser.parse_args()
+    command = args.command or "simulate"
 
     root = Path(__file__).resolve().parent
     config = load_config(root / args.config)
+    output_dir = root / str(config.get("paths", {}).get("output_dir", "outputs"))
+    logger = OutputLogger(output_dir)
+
+    if command == "mine-behavior":
+        run_mine_behavior(args, config, root, output_dir, logger, parser)
+        return
+    run_simulate(args, config, root, output_dir, logger, parser)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="LLM-based Knowledge-grounded User Simulator MVP")
+    parser.add_argument("--config", default="config.yaml")
+    subparsers = parser.add_subparsers(dest="command")
+
+    simulate = subparsers.add_parser("simulate", help="Run target-case user simulation.")
+    simulate.add_argument("--config", default="config.yaml")
+    add_simulate_args(simulate)
+
+    mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
+    mine.add_argument("--config", default="config.yaml")
+    mine.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
+    mine.add_argument("--max_dialogues", type=int, default=50)
+
+    # Backward-compatible direct invocation: python main.py --case_id ...
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "-h", "--help"}:
+        add_simulate_args(parser)
+    return parser
+
+
+def add_simulate_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--case_id")
+    parser.add_argument("--persona", default="low_tech", choices=sorted(PERSONAS))
+    parser.add_argument("--persona_id")
+    parser.add_argument("--max_turns", type=int, default=6)
+    parser.add_argument("--list_cases", type=int, default=0, help="List the first N cases from the configured case library and exit.")
+
+
+def run_mine_behavior(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    logger: OutputLogger,
+    parser: argparse.ArgumentParser,
+) -> None:
+    dialogues_config = args.dialogues or config.get("paths", {}).get("dialogues")
+    if not dialogues_config:
+        parser.error("Missing dialogue path. Use --dialogues or set paths.dialogues in config.yaml.")
+    dialogues_path = resolve_path(root, str(dialogues_config))
+    if not dialogues_path.exists():
+        parser.error(f"Configured historical dialogue file does not exist: {dialogues_path}")
+    llm_client = OpenAICompatibleClient.from_config(config)
+    dialogues = load_dialogues(dialogues_path, config.get("dialogue_fields"))
+    if args.max_dialogues:
+        dialogues = dialogues[: args.max_dialogues]
+    if not dialogues:
+        parser.error(f"No usable historical dialogues loaded from: {dialogues_path}")
+    result = DialogueBehaviorMiner(llm_client, output_dir, logger).mine(dialogues)
+    print(f"Mined {len(result['summaries'])} dialogue summaries.")
+    print(f"Mined {len(result['personas'])} employee personas.")
+    print(f"Mined {len(result['behavior_taxonomy'])} behavior taxonomy items.")
+    print(f"Outputs written to: {output_dir}")
+
+
+def run_simulate(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    logger: OutputLogger,
+    parser: argparse.ArgumentParser,
+) -> None:
     cases_config = config.get("paths", {}).get("cases")
     if not cases_config:
         parser.error("Missing paths.cases in config.yaml; it must point to the real case library.")
     cases_path = resolve_path(root, str(cases_config))
     if not cases_path.exists():
         parser.error(f"Configured case library does not exist: {cases_path}")
-    output_dir = root / str(config.get("paths", {}).get("output_dir", "outputs"))
     cases = load_cases(cases_path, config.get("case_fields"))
     if args.list_cases:
         for case in cases[: args.list_cases]:
@@ -50,10 +122,15 @@ def main() -> None:
     if not args.case_id:
         parser.error("--case_id is required unless --list_cases is used")
 
-    logger = OutputLogger(output_dir)
     llm_client = OpenAICompatibleClient.from_config(config)
     target_case = get_case(cases, args.case_id)
-    persona = PERSONAS[args.persona]
+    employee_personas = load_employee_personas(output_dir / "employee_personas.jsonl")
+    behavior_taxonomy = load_behavior_taxonomy(output_dir / "user_behavior_taxonomy.jsonl")
+    try:
+        employee_persona = select_employee_persona(employee_personas, args.persona_id)
+    except ValueError as exc:
+        parser.error(str(exc))
+    persona = model_to_dict(employee_persona) if employee_persona else PERSONAS[args.persona]
 
     queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
     related_cases = RelatedCaseRetriever(llm_client, logger).retrieve(target_case, queries, cases)
@@ -61,7 +138,14 @@ def main() -> None:
     verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
     relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)
     roadmap = RoadmapBuilder(llm_client, logger).build_roadmap(target_case, verification.verified_points, relations)
-    simulator = Simulator(roadmap, persona, llm_client, logger)
+    simulator = Simulator(
+        roadmap,
+        persona,
+        llm_client,
+        logger,
+        employee_persona=model_to_dict(employee_persona) if employee_persona else None,
+        behavior_taxonomy=[model_to_dict(item) for item in behavior_taxonomy],
+    )
 
     user_text = simulator.start()
     print(f"User: {user_text}")
@@ -84,6 +168,29 @@ def main() -> None:
             print(f"[STOP: {simulator.state.stop_reason or simulator.state.solution_status}]")
     if not simulator.state.should_stop:
         print(f"[STOP: max_turns={args.max_turns}]")
+
+
+def load_employee_personas(path: Path) -> list[EmployeePersona]:
+    if not path.exists():
+        return []
+    return [EmployeePersona(**record) for record in read_jsonl(path)]
+
+
+def load_behavior_taxonomy(path: Path) -> list[BehaviorTaxonomy]:
+    if not path.exists():
+        return []
+    return [BehaviorTaxonomy(**record) for record in read_jsonl(path)]
+
+
+def select_employee_persona(personas: list[EmployeePersona], persona_id: str | None) -> EmployeePersona | None:
+    if not personas:
+        return None
+    if not persona_id:
+        return personas[0]
+    for persona in personas:
+        if persona.persona_id == persona_id:
+            return persona
+    raise ValueError(f"persona_id not found in employee_personas.jsonl: {persona_id}")
 
 
 def load_config(path: Path) -> Dict[str, Any]:
