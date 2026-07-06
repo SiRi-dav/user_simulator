@@ -54,21 +54,24 @@ target case
 最终产物是：
 
 ```text
-outputs/case_analysis_artifacts.jsonl
+outputs/blind_user_case_views.jsonl
+outputs/knowledge_roadmaps.jsonl
 ```
 
-每个 case 会提前生成一份 artifact，里面包括：
+每个 case 会提前生成两份文件：
 
 ```text
-blind_user_view: 给 Blind User 看的用户问题、开场意图、可见事实
-knowledge_module_view: 给 Knowledge Module 看的完整知识 roadmap
-roadmap: runtime 实际使用的事实边界
+blind_user_case_views.jsonl: 给 Blind User 看的用户问题、开场意图、可见事实
+knowledge_roadmaps.jsonl: 给 Knowledge Module 看的完整知识 roadmap
 ```
 
-roadmap 决定事实边界，也就是：
+这里说的 roadmap，不是给 Blind User 看的材料。它是 Knowledge Module 用来控制对话的信息范围：
 
 ```text
-用户能说什么，不能说什么。
+哪些 fact 允许透露；
+哪些 fact 需要被问到才透露；
+哪些 solution 内容只能用于判断，不能提前泄露；
+assistant 的方案是否命中 target solution。
 ```
 
 ### 2.2 Dialogue Behavior Line
@@ -244,10 +247,21 @@ python3 main.py analyze-cases --case_ids <真实案例ID_1> <真实案例ID_2>
 这一步会输出：
 
 ```text
-outputs/case_analysis_artifacts.jsonl
+outputs/blind_user_case_views.jsonl
+outputs/knowledge_roadmaps.jsonl
 ```
 
-每一行是一条 case 的完整离线分析结果，包括：
+`blind_user_case_views.jsonl` 每一行是一个安全视图，只包含：
+
+```text
+case_id
+surface_problem
+opening_intent
+user_facing_points
+forbidden_content
+```
+
+`knowledge_roadmaps.jsonl` 每一行是给 Knowledge Module 的完整路书，包括：
 
 ```text
 retrieval queries
@@ -255,11 +269,9 @@ related cases
 verified points
 relations
 roadmap
-blind_user_view
-knowledge_module_view
 ```
 
-后续 `simulate` 只读取这个文件，不再现场重新跑 retrieval / extraction / roadmap。
+后续 `simulate` 只读取 `knowledge_roadmaps.jsonl` 中对应 case 的 roadmap，不再现场重新跑 retrieval / extraction / roadmap。
 
 基础命令：
 
@@ -512,10 +524,11 @@ outputs/roadmaps.jsonl
 同时写入总 artifact：
 
 ```text
-outputs/case_analysis_artifacts.jsonl
+outputs/blind_user_case_views.jsonl
+outputs/knowledge_roadmaps.jsonl
 ```
 
-这个文件是后续 `simulate` 的主要输入。它让在线模拟不需要每次重新跑 case analysis。
+`blind_user_case_views.jsonl` 用于人工检查 Blind User 能看到什么；`knowledge_roadmaps.jsonl` 是后续 `simulate` 的主要输入。这样在线模拟不需要每次重新跑 case analysis，也避免把完整 roadmap 混进 Blind User 视图。
 
 ## 11. simulate 内部做了什么
 
@@ -530,15 +543,17 @@ simulate 只做 runtime 对话，不再现场执行 QueryGenerator / PointExtrac
 它会先读取：
 
 ```text
-outputs/case_analysis_artifacts.jsonl
+outputs/knowledge_roadmaps.jsonl
 ```
 
-找到对应 `case_id` 的预生成 artifact，并从里面拿到：
+找到对应 `case_id` 的预生成 Knowledge Module 路书，并从里面拿到完整 roadmap。
+
+Blind User 不读取这个完整文件。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
+
+如果你想人工检查 Blind User 可见内容，看：
 
 ```text
-roadmap
-blind_user_view
-knowledge_module_view
+outputs/blind_user_case_views.jsonl
 ```
 
 如果找不到该 case 的 artifact，程序会停止并提示你先运行：
@@ -667,7 +682,7 @@ runtime 中优先级是：
 
 含义：
 
-- roadmap 决定事实边界；
+- roadmap 决定允许透露/禁止透露的信息范围；
 - state 决定已经说过什么、是否该停；
 - taxonomy 决定面对不同 assistant act 怎么反应；
 - persona 决定怎么自然表达。

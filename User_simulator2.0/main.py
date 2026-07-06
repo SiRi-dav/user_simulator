@@ -16,7 +16,7 @@ from src.retrieval.related_case_retriever import RelatedCaseRetriever
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.simulator import Simulator
-from src.schemas import BehaviorTaxonomy, Case, CaseAnalysisArtifact, EmployeePersona, Roadmap, model_to_dict
+from src.schemas import BehaviorTaxonomy, BlindUserCaseView, Case, EmployeePersona, KnowledgeRoadmapArtifact, Roadmap, model_to_dict
 from src.utils.jsonl import read_jsonl, write_jsonl
 from src.utils.logging import OutputLogger
 
@@ -125,13 +125,19 @@ def run_analyze_cases(
     if not selected_cases:
         parser.error("No cases selected for analysis.")
     llm_client = OpenAICompatibleClient.from_config(config)
-    artifacts: list[CaseAnalysisArtifact] = []
+    blind_user_views: list[BlindUserCaseView] = []
+    knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
     for index, target_case in enumerate(selected_cases, 1):
         print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
-        artifacts.append(build_case_analysis_artifact(target_case, cases, llm_client, logger))
-    artifact_path = output_dir / "case_analysis_artifacts.jsonl"
-    write_jsonl(artifact_path, [model_to_dict(artifact) for artifact in artifacts])
-    print(f"Wrote {len(artifacts)} case analysis artifacts to: {artifact_path}")
+        blind_view, knowledge_artifact = build_case_analysis_artifacts(target_case, cases, llm_client, logger)
+        blind_user_views.append(blind_view)
+        knowledge_artifacts.append(knowledge_artifact)
+    blind_view_path = output_dir / "blind_user_case_views.jsonl"
+    knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
+    write_jsonl(blind_view_path, [model_to_dict(view) for view in blind_user_views])
+    write_jsonl(knowledge_path, [model_to_dict(artifact) for artifact in knowledge_artifacts])
+    print(f"Wrote {len(blind_user_views)} blind-user case views to: {blind_view_path}")
+    print(f"Wrote {len(knowledge_artifacts)} knowledge roadmaps to: {knowledge_path}")
 
 
 def run_simulate(
@@ -151,11 +157,11 @@ def run_simulate(
         parser.error("--case_id is required unless --list_cases is used")
 
     llm_client = OpenAICompatibleClient.from_config(config)
-    artifacts = load_case_analysis_artifacts(output_dir / "case_analysis_artifacts.jsonl")
-    artifact = artifacts.get(args.case_id)
-    if artifact is None:
+    knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
+    knowledge_artifact = knowledge_artifacts.get(args.case_id)
+    if knowledge_artifact is None:
         parser.error(
-            f"No precomputed case artifact found for {args.case_id}. "
+            f"No precomputed knowledge roadmap found for {args.case_id}. "
             "Run: python3 main.py analyze-cases --case_ids "
             f"{args.case_id}"
         )
@@ -168,7 +174,7 @@ def run_simulate(
     persona = model_to_dict(employee_persona) if employee_persona else PERSONAS[args.persona]
 
     simulator = Simulator(
-        artifact.roadmap,
+        knowledge_artifact.roadmap,
         persona,
         llm_client,
         logger,
@@ -212,19 +218,19 @@ def load_configured_cases(config: Dict[str, Any], root: Path, parser: argparse.A
     return cases
 
 
-def build_case_analysis_artifact(
+def build_case_analysis_artifacts(
     target_case: Case,
     all_cases: list[Case],
     llm_client: OpenAICompatibleClient,
     logger: OutputLogger,
-) -> CaseAnalysisArtifact:
+) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact]:
     queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
     related_cases = RelatedCaseRetriever(llm_client, logger).retrieve(target_case, queries, all_cases)
     points = PointExtractor(llm_client, logger).extract_points(target_case, related_cases)
     verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
     relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)
     roadmap = RoadmapBuilder(llm_client, logger).build_roadmap(target_case, verification.verified_points, relations)
-    return CaseAnalysisArtifact(
+    return build_blind_user_view(roadmap), KnowledgeRoadmapArtifact(
         case_id=target_case.case_id,
         target_case=target_case,
         retrieval_queries=queries,
@@ -234,31 +240,23 @@ def build_case_analysis_artifact(
         warnings=verification.warnings,
         relations=relations,
         roadmap=roadmap,
-        blind_user_view=build_blind_user_view(roadmap),
-        knowledge_module_view=build_knowledge_module_view(roadmap),
     )
 
 
-def build_blind_user_view(roadmap: Roadmap) -> Dict[str, Any]:
-    return {
-        "surface_problem": roadmap.surface_problem,
-        "opening_intent": roadmap.opening_intent,
-        "user_facing_points": [model_to_dict(point) for point in roadmap.user_facing_points],
-        "forbidden_content": roadmap.forbidden_content,
-    }
+def build_blind_user_view(roadmap: Roadmap) -> BlindUserCaseView:
+    return BlindUserCaseView(
+        case_id=roadmap.target_case_id,
+        surface_problem=roadmap.surface_problem,
+        opening_intent=roadmap.opening_intent,
+        user_facing_points=roadmap.user_facing_points,
+        forbidden_content=roadmap.forbidden_content,
+    )
 
 
-def build_knowledge_module_view(roadmap: Roadmap) -> Dict[str, Any]:
-    return {
-        "roadmap": model_to_dict(roadmap),
-        "priority_note": "Roadmap factual constraints decide allowed_content; behavior taxonomy only controls reaction style.",
-    }
-
-
-def load_case_analysis_artifacts(path: Path) -> dict[str, CaseAnalysisArtifact]:
-    artifacts: dict[str, CaseAnalysisArtifact] = {}
+def load_knowledge_roadmaps(path: Path) -> dict[str, KnowledgeRoadmapArtifact]:
+    artifacts: dict[str, KnowledgeRoadmapArtifact] = {}
     for record in read_jsonl(path):
-        artifact = CaseAnalysisArtifact(**record)
+        artifact = KnowledgeRoadmapArtifact(**record)
         artifacts[artifact.case_id] = artifact
     return artifacts
 

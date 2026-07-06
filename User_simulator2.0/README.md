@@ -144,19 +144,26 @@ python main.py analyze-cases --case_ids <CASE_ID_1> <CASE_ID_2>
 
 It writes:
 
-- `outputs/case_analysis_artifacts.jsonl`
+- `outputs/blind_user_case_views.jsonl`
+- `outputs/knowledge_roadmaps.jsonl`
 
-Each artifact contains:
+`blind_user_case_views.jsonl` is the only case-analysis file that should be considered visible to Blind User. It contains:
+
+- case id
+- surface problem
+- opening intent
+- user-facing points
+- forbidden content
+
+`knowledge_roadmaps.jsonl` is for Knowledge Module and runtime control. It contains:
 
 - retrieval queries
 - related cases
 - verified points
 - relations
 - roadmap
-- `blind_user_view`, including the user-facing problem
-- `knowledge_module_view`, including the knowledge roadmap
 
-`simulate` reads this file. If the selected case has not been analyzed yet, `simulate` stops and tells you to run `analyze-cases` first.
+`simulate` reads `knowledge_roadmaps.jsonl`. If the selected case has not been analyzed yet, `simulate` stops and tells you to run `analyze-cases` first.
 
 ## Outputs
 
@@ -168,7 +175,8 @@ All intermediate results are saved as JSONL records under `outputs/`.
 - `verified_points.jsonl`: verified and dropped points
 - `relations.jsonl`: point relations
 - `roadmaps.jsonl`: assembled roadmaps
-- `case_analysis_artifacts.jsonl`: reusable per-case roadmaps and views for runtime
+- `blind_user_case_views.jsonl`: safe per-case view for Blind User
+- `knowledge_roadmaps.jsonl`: complete per-case roadmap for Knowledge Module/runtime
 - `simulation_logs.jsonl`: runtime turn logs
 - `dialogue_behavior_summaries.jsonl`: per-dialogue behavior summaries
 - `employee_personas.jsonl`: mined employee persona library

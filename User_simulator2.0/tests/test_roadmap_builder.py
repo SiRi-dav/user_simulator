@@ -1,6 +1,6 @@
 from src.extraction.point_extractor import PointExtractor
 from src.llm.mock_llm_client import MockLLMClient
-from main import build_case_analysis_artifact
+from main import build_case_analysis_artifacts
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.schemas import Case
@@ -17,11 +17,12 @@ def test_roadmap_builder_generates_surface_problem_and_target_route():
     assert roadmap.solution_points[0].visibility == "judge_only"
 
 
-def test_case_analysis_artifact_contains_blind_and_knowledge_views():
+def test_case_analysis_outputs_are_split_for_blind_and_knowledge_modules():
     llm = MockLLMClient()
     target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
     related = Case(case_id="CASE_002", title="Outlook 登录失败", phenomenon="密码失败", solution="重置密码")
-    artifact = build_case_analysis_artifact(target, [target, related], llm, logger=None)
-    assert artifact.case_id == "CASE_001"
-    assert artifact.blind_user_view["surface_problem"]
-    assert artifact.knowledge_module_view["roadmap"]["target_case_id"] == "CASE_001"
+    blind_view, knowledge_artifact = build_case_analysis_artifacts(target, [target, related], llm, logger=None)
+    assert blind_view.case_id == "CASE_001"
+    assert blind_view.surface_problem
+    assert not hasattr(blind_view, "solution_points")
+    assert knowledge_artifact.roadmap.target_case_id == "CASE_001"

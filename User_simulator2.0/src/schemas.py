@@ -84,7 +84,15 @@ class Roadmap(BaseModel):
     forbidden_content: List[str]
 
 
-class CaseAnalysisArtifact(BaseModel):
+class BlindUserCaseView(BaseModel):
+    case_id: str
+    surface_problem: str
+    opening_intent: str
+    user_facing_points: List[Point]
+    forbidden_content: List[str]
+
+
+class KnowledgeRoadmapArtifact(BaseModel):
     case_id: str
     target_case: Case
     retrieval_queries: List[RetrievalQuery]
@@ -94,8 +102,6 @@ class CaseAnalysisArtifact(BaseModel):
     warnings: List[str]
     relations: List[Relation]
     roadmap: Roadmap
-    blind_user_view: Dict[str, Any]
-    knowledge_module_view: Dict[str, Any]
 
 
 class DialogueState(BaseModel):

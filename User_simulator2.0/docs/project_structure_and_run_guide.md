@@ -49,17 +49,18 @@
 6. `PointVerifier` 用 LLM 校验 points
 7. `RelationBuilder` 用 LLM 建立 point relations
 8. `RoadmapBuilder` 用 LLM 组装 roadmap
-9. 写入 `outputs/case_analysis_artifacts.jsonl`
+9. 写入 `outputs/blind_user_case_views.jsonl`
+10. 写入 `outputs/knowledge_roadmaps.jsonl`
 
-每个 artifact 中包含：
+这两个文件刻意分开，避免 Blind User 误读完整 roadmap。
 
-- `blind_user_view`: 给 Blind User 看的用户问题、开场意图、用户可见 facts
-- `knowledge_module_view`: 给 Knowledge Module 看的完整知识 roadmap
-- `roadmap`: runtime 使用的事实边界
+`blind_user_case_views.jsonl` 只包含用户问题、开场意图、用户可见 facts 和 forbidden content。
+
+`knowledge_roadmaps.jsonl` 包含完整 roadmap，供 Knowledge Module 和 runtime 控制使用。
 
 第三阶段：在线模拟
 
-1. 根据 `--case_id` 从 `outputs/case_analysis_artifacts.jsonl` 读取预生成路书
+1. 根据 `--case_id` 从 `outputs/knowledge_roadmaps.jsonl` 读取预生成路书
 2. 读取 `outputs/employee_personas.jsonl` 和 `outputs/user_behavior_taxonomy.jsonl`
 3. `Simulator.start()` 用 LLM 生成初始用户发言
 4. 人工在命令行输入 assistant 回复
@@ -791,11 +792,15 @@ BehaviorTaxonomy
 
 保存 roadmap assembly 的输入输出。
 
-### `outputs/case_analysis_artifacts.jsonl`
+### `outputs/blind_user_case_views.jsonl`
 
-保存每个 case 的可复用分析结果。后续 `simulate` 默认读取这个文件，不再现场重新运行 retrieval、extraction、roadmap。
+保存每个 case 给 Blind User 的安全视图。这个文件不包含完整 roadmap，也不包含 solution points。
 
-每条 artifact 包含：
+### `outputs/knowledge_roadmaps.jsonl`
+
+保存每个 case 给 Knowledge Module/runtime 使用的完整路书。后续 `simulate` 默认读取这个文件，不再现场重新运行 retrieval、extraction、roadmap。
+
+每条 knowledge roadmap 包含：
 
 - target case
 - retrieval queries
@@ -803,8 +808,6 @@ BehaviorTaxonomy
 - verified points
 - relations
 - roadmap
-- blind user view
-- knowledge module view
 
 ### `outputs/simulation_logs.jsonl`
 
