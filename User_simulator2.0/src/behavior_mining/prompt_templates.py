@@ -45,21 +45,45 @@ Return JSON:
 }}
 Return only JSON."""
 
-BEHAVIOR_TAXONOMY_SYSTEM = """You are an expert in dialogue behavior analysis for enterprise IT support.
-Your task is to analyze historical support dialogues and build a behavior taxonomy for simulated users.
-The taxonomy should describe how real employee users react to different assistant acts.
+BEHAVIOR_TAXONOMY_SYSTEM = """You are an expert in dialogue behavior analysis for enterprise IT support user simulation.
+Your task is not to create many fine-grained labels.
+Your task is to compress observed user behaviors into a small, stable set of runtime behavior policies for a simulated user.
+The final taxonomy should help the simulator decide how a real employee user reacts, what information may be released, and what must remain hidden.
 Return only valid JSON."""
 
 BEHAVIOR_TAXONOMY_USER = """Historical dialogues:
 {dialogues_json}
-We are building a user simulator. We need to know whether user behavior can be categorized by assistant acts such as:
+We are building a user simulator, not an open-ended behavior ontology.
+Compress the observed user behaviors into exactly 4 to 6 high-level runtime policies.
+
+Assistant acts that may trigger user behavior:
 - clarification_question
 - action_request
 - solution_output
 - generic_advice
 - offtrack_question
-Analyze the dialogues and summarize user behavior categories.
-For each behavior category, output:
+
+Preferred canonical policies:
+1. 陈述或继续澄清问题
+2. 回答客服并释放信息
+3. 询问具体操作办法
+4. 尝试操作并反馈结果
+5. 方向不符时纠正或拉回问题
+6. 确认解决或继续求助
+
+You may rename the policies if needed, but do not create more than 6.
+Merge fine-grained behaviors when they serve the same simulator decision.
+
+Mandatory merge guidance:
+- answer_fact / reveal_new_fact / provide_partial_info -> 回答客服并释放信息
+- repeat_surface_problem / restate_issue / clarify_problem -> 陈述或继续澄清问题
+- ask_how_to_perform / ask_for_steps / ask_for_guidance -> 询问具体操作办法
+- attempt_action / report_action_result -> 尝试操作并反馈结果
+- deny_or_correct / reject_wrong_assumption / redirect -> 方向不符时纠正或拉回问题
+- accept_solution / reject_solution / ask_next_step -> 确认解决或继续求助
+- ignore_or_silence should not be a default policy unless strongly supported; usually merge it into vague/cooperation sensitivity.
+
+For each runtime policy, output:
 {{
   "behavior_name": "...",
   "definition": "...",
@@ -73,26 +97,24 @@ For each behavior category, output:
   }},
   "simulator_policy_hint": "how this behavior should be implemented in the simulator"
 }}
-Important behavior types to check:
-1. answering clarification questions,
-2. revealing new diagnostic facts,
-3. asking how to perform an action,
-4. attempting an action and reporting result,
-5. saying the requested information is unavailable,
-6. denying or correcting an off-track assumption,
-7. repeating the surface problem,
-8. accepting a solution,
-9. rejecting a solution as not applicable,
-10. showing frustration or impatience.
+
+The simulator_policy_hint must explicitly mention information boundaries:
+- user-facing information may be volunteered when stating the problem.
+- diagnostic information may be released only when the assistant asks a relevant question.
+- solution information must not be volunteered by the user.
+- external/confusing information should only be used to correct or redirect off-track assistant behavior.
+
 Return JSON:
 {{
   "behavior_taxonomy": [...]
 }}
 Requirements:
 - Use the historical dialogues as evidence.
-- You may modify, merge, or add behavior categories if the data suggests it.
-- Do not force all categories if not observed.
-- Focus on behavior useful for runtime user simulation.
+- Return exactly 4 to 6 behavior policies.
+- Do not output fine-grained labels such as answer_fact, reveal_new_fact, provide_partial_info, or report_action_result as separate behavior categories.
+- Put fine-grained labels only inside typical_user_response_patterns or simulator_policy_hint if they are useful.
+- Avoid near-duplicate categories.
+- Focus on policies useful for runtime user simulation, not generic dialogue-act taxonomy.
 Return only JSON."""
 
 DIALOGUE_SUMMARY_SYSTEM = """You are an expert in analyzing one enterprise IT support dialogue.
