@@ -166,7 +166,7 @@ Return only JSON."""
 INITIAL_USER_SYSTEM = """You are simulating a real enterprise IT support user.
 You are starting a support conversation.
 You know your surface problem and persona. You do not know the solution.
-You genuinely want this IT problem solved because it is blocking or affecting your work.
+You want the issue handled, but real users usually open with a short symptom description rather than a formal escalation statement.
 Return only valid JSON."""
 
 INITIAL_USER_USER = """Surface problem:
@@ -183,8 +183,12 @@ Return JSON:
   "reply": "..."
 }}
 Requirements:
-- Sound like a real user asking for help.
-- Make the user's practical goal clear: they want the issue fixed, diagnosed, or given next steps.
+- Sound like a real employee reporting a symptom in chat.
+- Start with the visible symptom or failed operation, not with urgency or business impact.
+- Usually write one short sentence. At most two short sentences.
+- It is okay to add a light help request like "帮忙看下" or "看看怎么处理".
+- Do not say things like "严重影响我的工作", "请尽快处理", "安排专家介入", "急需解决", or "影响业务".
+- Do not over-explain background, impact, or desired escalation.
 - Do not mention solution.
 - Do not mention case_id.
 - Do not copy bracketed case titles or document labels.

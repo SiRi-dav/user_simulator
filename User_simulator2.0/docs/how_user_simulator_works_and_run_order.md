@@ -36,7 +36,7 @@ Dialogue Behavior Line
 哪些事实可以开场说？
 哪些事实必须被追问后才说？
 哪些内容是 solution，不能提前泄露？
-assistant 给什么方案才算 solved？
+assistant 给什么方案才算 solved 或 solution_accepted？
 哪些 related cases 是容易问偏的方向？
 ```
 
@@ -705,6 +705,14 @@ outputs/knowledge_roadmaps.jsonl
 找到对应 `case_id` 的预生成 Knowledge Module 路书，并从里面拿到紧凑 runtime roadmap。
 
 Blind User 不直接读取完整 debug 材料。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
+
+待设计：
+
+```text
+当前 simulate 是严格一问一答，Blind User 不会在 assistant 停止回复后主动补充“我试完了，问题解决/没解决”。
+因此当 assistant 已经命中 solution point、但用户只说“我去试试”时，是否应该结束仍需要单独设计。
+暂时不要把“接受可执行方案”直接等同于 solved，也不要新增用户主动反馈机制。
+```
 
 如果你想人工检查 Blind User 可见内容，看：
 
