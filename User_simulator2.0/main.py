@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import random
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -66,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--limit", type=int, default=20)
     analyze.add_argument("--offset", type=int, default=0)
     analyze.add_argument("--case_ids", nargs="*")
+    analyze.add_argument("--random", action="store_true", help="Randomly sample --limit cases instead of using offset.")
+    analyze.add_argument("--seed", type=int, help="Random seed for --random case sampling.")
 
     mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
     mine.add_argument("--config", default="config.yaml")
@@ -129,6 +132,10 @@ def run_analyze_cases(
     cases = load_configured_cases(config, root, parser)
     if args.case_ids:
         selected_cases = [get_case(cases, case_id) for case_id in args.case_ids]
+    elif args.random:
+        sampler = random.Random(args.seed)
+        sample_size = min(args.limit, len(cases))
+        selected_cases = sampler.sample(cases, sample_size)
     else:
         selected_cases = cases[args.offset : args.offset + args.limit]
     if not selected_cases:
@@ -143,10 +150,16 @@ def run_analyze_cases(
         knowledge_artifacts.append(knowledge_artifact)
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
     knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
-    write_jsonl(blind_view_path, [model_to_dict(view) for view in blind_user_views])
-    write_jsonl(knowledge_path, [model_to_dict(artifact) for artifact in knowledge_artifacts])
-    print(f"Wrote {len(blind_user_views)} blind-user case views to: {blind_view_path}")
-    print(f"Wrote {len(knowledge_artifacts)} knowledge roadmaps to: {knowledge_path}")
+    total_blind_views = upsert_jsonl_by_key(blind_view_path, [model_to_dict(view) for view in blind_user_views], "case_id")
+    total_knowledge_artifacts = upsert_jsonl_by_key(
+        knowledge_path,
+        [model_to_dict(artifact) for artifact in knowledge_artifacts],
+        "case_id",
+    )
+    print(f"Upserted {len(blind_user_views)} blind-user case views to: {blind_view_path}")
+    print(f"Total blind-user case views: {total_blind_views}")
+    print(f"Upserted {len(knowledge_artifacts)} knowledge roadmaps to: {knowledge_path}")
+    print(f"Total knowledge roadmaps: {total_knowledge_artifacts}")
 
 
 def run_simulate(
@@ -302,6 +315,20 @@ def load_blind_user_case_views(path: Path) -> dict[str, BlindUserCaseView]:
         view = BlindUserCaseView(**record)
         views[view.case_id] = view
     return views
+
+
+def upsert_jsonl_by_key(path: Path, new_records: list[Dict[str, Any]], key: str) -> int:
+    merged: dict[str, Dict[str, Any]] = {}
+    for record in read_jsonl(path):
+        record_key = str(record.get(key) or "")
+        if record_key:
+            merged[record_key] = record
+    for record in new_records:
+        record_key = str(record.get(key) or "")
+        if record_key:
+            merged[record_key] = record
+    write_jsonl(path, merged.values())
+    return len(merged)
 
 
 def load_employee_personas(path: Path) -> list[EmployeePersona]:

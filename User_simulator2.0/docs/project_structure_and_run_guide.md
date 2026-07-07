@@ -990,11 +990,25 @@ python3 main.py simulate --list_cases 20
 python3 main.py analyze-cases --limit 20
 ```
 
+换下一批 case：
+
+```bash
+python3 main.py analyze-cases --limit 20 --offset 20
+```
+
+随机抽样 case：
+
+```bash
+python3 main.py analyze-cases --limit 20 --random --seed 42
+```
+
 或者只分析指定 case：
 
 ```bash
 python3 main.py analyze-cases --case_ids <真实案例ID_1> <真实案例ID_2>
 ```
+
+注意：`blind_user_case_views.jsonl` 和 `knowledge_roadmaps.jsonl` 会按 `case_id` upsert，不会因为换一批分析就覆盖掉旧 case。
 
 运行 demo，其中 `--case_id` 要换成已经分析过的真实案例 ID：
 

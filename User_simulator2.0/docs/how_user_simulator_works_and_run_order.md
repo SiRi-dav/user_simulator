@@ -239,6 +239,18 @@ CASE_yyy    另一个案例标题
 python3 main.py analyze-cases --limit 20
 ```
 
+换下一批 20 个 case：
+
+```bash
+python3 main.py analyze-cases --limit 20 --offset 20
+```
+
+随机抽 20 个 case：
+
+```bash
+python3 main.py analyze-cases --limit 20 --random --seed 42
+```
+
 或者只预处理指定 case：
 
 ```bash
@@ -251,6 +263,24 @@ python3 main.py analyze-cases --case_ids <真实案例ID_1> <真实案例ID_2>
 outputs/blind_user_case_views.jsonl
 outputs/knowledge_roadmaps.jsonl
 ```
+
+这两个最终 artifact 文件按 `case_id` upsert：
+
+```text
+新 case 会追加
+重复 case 会替换
+旧的其他 case 会保留
+```
+
+因此可以分批运行：
+
+```bash
+python3 main.py analyze-cases --limit 20 --offset 0
+python3 main.py analyze-cases --limit 20 --offset 20
+python3 main.py analyze-cases --limit 20 --offset 40
+```
+
+最终 `knowledge_roadmaps.jsonl` 会累计这些批次中成功分析完成的 case。
 
 `blind_user_case_views.jsonl` 每一行是一个安全视图，只包含：
 

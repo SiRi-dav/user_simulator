@@ -158,6 +158,18 @@ Case analysis is an offline preprocessing step. It builds reusable artifacts for
 python main.py analyze-cases --limit 20
 ```
 
+Analyze a different sequential batch:
+
+```bash
+python main.py analyze-cases --limit 20 --offset 20
+```
+
+Randomly sample cases:
+
+```bash
+python main.py analyze-cases --limit 20 --random --seed 42
+```
+
 Or select exact cases:
 
 ```bash
@@ -168,6 +180,8 @@ It writes:
 
 - `outputs/blind_user_case_views.jsonl`
 - `outputs/knowledge_roadmaps.jsonl`
+
+These two final artifact files are upserted by `case_id`: newly analyzed cases are added, repeated cases are replaced, and unrelated old cases are preserved.
 
 `blind_user_case_views.jsonl` is the only case-analysis file that should be considered visible to Blind User. It contains:
 
