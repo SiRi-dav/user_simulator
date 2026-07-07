@@ -1,9 +1,9 @@
 llm:
   provider: "openai-compatible"
-  endpoint: "http://localhost:8850/v1/chat/completions"
-  base_url: ""
-  api_key: "EMPTY"
-  model: "qwen3-32b"
+  base_url: "http://10.67.43.7:12345/v1"
+  endpoint: ""
+  api_key: "sk-1234"
+  model: "qwen3"
   temperature: 0.2
   max_tokens: 4096
   timeout: 300
@@ -11,6 +11,7 @@ llm:
   presence_penalty: 1.5
   top_k: 1
   enable_thinking: false
+  response_format_json: false
 
 paths:
   cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"

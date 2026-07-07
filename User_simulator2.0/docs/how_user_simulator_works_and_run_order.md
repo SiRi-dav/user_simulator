@@ -159,8 +159,9 @@ config.yaml
 
 ```yaml
 llm:
-  endpoint: "http://localhost:8850/v1/chat/completions"
-  model: "qwen3-32b"
+  base_url: "http://10.67.43.7:12345/v1"
+  api_key: "sk-1234"
+  model: "qwen3"
 
 paths:
   cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
@@ -173,7 +174,7 @@ paths:
 - `cases`: 真实案例库路径
 - `dialogues`: 历史客服对话记录路径
 - `output_dir`: 中间结果输出目录
-- `llm`: 公司 qwen32b 接入方式
+- `llm`: 公司 qwen3/OpenAI SDK-compatible 接入方式
 
 如果真实数据文件不在这个位置，需要改 `config.yaml`。
 

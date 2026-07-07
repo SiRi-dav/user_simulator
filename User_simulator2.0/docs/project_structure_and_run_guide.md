@@ -114,15 +114,15 @@ print(f"Assistant> {assistant_text}")
 
 配置 LLM 和路径。
 
-当前默认配置沿用之前项目的 qwen32b OpenAI-compatible 接入方式：
+当前默认配置使用 mentor 提供的 OpenAI SDK-compatible 接入方式：
 
 ```yaml
 llm:
   provider: "openai-compatible"
-  endpoint: "http://localhost:8850/v1/chat/completions"
-  base_url: ""
-  api_key: "EMPTY"
-  model: "qwen3-32b"
+  base_url: "http://10.67.43.7:12345/v1"
+  endpoint: ""
+  api_key: "sk-1234"
+  model: "qwen3"
   temperature: 0.2
   max_tokens: 4096
   timeout: 300
@@ -355,13 +355,12 @@ class LLMClient(ABC):
 职责：
 
 - 从 `config.yaml` 或环境变量读取 LLM 配置
-- 按 OpenAI-compatible `/chat/completions` 格式请求 qwen32b
+- 使用 `from openai import OpenAI` 的 SDK 形式请求公司 qwen3 服务
 - 要求模型返回 JSON object
 - 从返回文本中提取 JSON
 
 支持环境变量：
 
-- `LLM_ENDPOINT`
 - `LLM_BASE_URL`
 - `LLM_API_KEY`
 - `LLM_MODEL`
@@ -371,7 +370,7 @@ class LLMClient(ABC):
 
 测试专用 mock client。
 
-注意：正式运行不使用它。它只用于 `tests/`，保证测试可以在没有 qwen32b 服务的情况下跑通。
+注意：正式运行不使用它。它只用于 `tests/`，保证测试可以在没有真实 qwen3 服务的情况下跑通。
 
 ## 6. 数据加载：`src/data_loader.py`
 
@@ -862,7 +861,7 @@ tests/
   test_runtime.py
 ```
 
-测试使用 `MockLLMClient`，不依赖真实 qwen32b 服务。
+测试使用 `MockLLMClient`，不依赖真实 qwen3 服务。
 
 测试覆盖：
 
@@ -882,11 +881,11 @@ tests/
 cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
 ```
 
-确认 qwen32b 服务已经启动，并且 `config.yaml` 中 endpoint 正确：
+确认 qwen3 服务已经启动，并且 `config.yaml` 中 base_url 正确：
 
 ```yaml
-endpoint: "http://localhost:8850/v1/chat/completions"
-model: "qwen3-32b"
+base_url: "http://10.67.43.7:12345/v1"
+model: "qwen3"
 ```
 
 确认 `config.yaml` 中案例库路径正确：
@@ -1011,14 +1010,14 @@ python3 -m compileall .
 python3 main.py --case_id <真实案例ID> --persona low_tech
 ```
 
-### 2. 连接不上 qwen32b
+### 2. 连接不上 qwen3
 
 检查：
 
-- qwen32b 服务是否启动
-- `config.yaml` 里的 endpoint 是否正确
-- 是否需要设置 `LLM_ENDPOINT`
-- 端口是否是 `8850`
+- qwen3 服务是否启动
+- `config.yaml` 里的 base_url 是否正确
+- 是否需要设置 `LLM_BASE_URL`
+- 端口是否是 `12345`
 
 ### 3. LLM 返回不是合法 JSON
 

@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
 from typing import Any, Dict, Optional
 
 from src.llm.llm_client import LLMClient
@@ -24,9 +21,9 @@ class OpenAICompatibleClient(LLMClient):
         presence_penalty: float | None = None,
         top_k: int | None = None,
         enable_thinking: bool | None = None,
+        response_format_json: bool = False,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.endpoint = endpoint.rstrip("/")
+        self.base_url = normalize_base_url(base_url=base_url, endpoint=endpoint)
         self.api_key = api_key
         self.model = model
         self.temperature = temperature
@@ -36,6 +33,7 @@ class OpenAICompatibleClient(LLMClient):
         self.presence_penalty = presence_penalty
         self.top_k = top_k
         self.enable_thinking = enable_thinking
+        self.response_format_json = response_format_json
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "OpenAICompatibleClient":
@@ -52,6 +50,7 @@ class OpenAICompatibleClient(LLMClient):
             presence_penalty=_optional_float(llm_config.get("presence_penalty")),
             top_k=_optional_int(llm_config.get("top_k")),
             enable_thinking=_optional_bool(llm_config.get("enable_thinking")),
+            response_format_json=_optional_bool(llm_config.get("response_format_json")) or False,
         )
 
     def generate_json(
@@ -61,12 +60,15 @@ class OpenAICompatibleClient(LLMClient):
         schema_name: Optional[str] = None,
         temperature: float = 0.2,
     ) -> Dict[str, Any]:
-        if not (self.endpoint or self.base_url) or not self.model:
-            raise RuntimeError("LLM endpoint/base_url/model is not configured. Edit config.yaml or set LLM_ENDPOINT/LLM_MODEL.")
-        endpoint = self.endpoint or self.base_url
-        if not endpoint.endswith("/chat/completions"):
-            endpoint = f"{endpoint}/chat/completions"
-        payload = {
+        if not self.base_url or not self.model:
+            raise RuntimeError("LLM base_url/model is not configured. Edit config.yaml or set LLM_BASE_URL/LLM_MODEL.")
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("Missing dependency: openai. Install it with `pip install openai`.") from exc
+
+        client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+        request_kwargs: Dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -74,36 +76,35 @@ class OpenAICompatibleClient(LLMClient):
             ],
             "temperature": temperature if temperature is not None else self.temperature,
             "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if self.response_format_json:
+            request_kwargs["response_format"] = {"type": "json_object"}
         if self.top_p is not None:
-            payload["top_p"] = self.top_p
+            request_kwargs["top_p"] = self.top_p
         if self.presence_penalty is not None:
-            payload["presence_penalty"] = self.presence_penalty
+            request_kwargs["presence_penalty"] = self.presence_penalty
+        extra_body: Dict[str, Any] = {}
         if self.top_k is not None:
-            payload["top_k"] = self.top_k
+            extra_body["top_k"] = self.top_k
         if self.enable_thinking is not None:
-            payload["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        request = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"LLM HTTP error {exc.code}: {body}") from exc
-        choices = data.get("choices") or []
-        if not choices:
+            extra_body["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
+        if extra_body:
+            request_kwargs["extra_body"] = extra_body
+
+        completion = client.chat.completions.create(**request_kwargs)
+        choices = completion.choices or []
+        if not choices or choices[0].message is None:
             raise RuntimeError(f"LLM returned no choices for schema {schema_name}")
-        content = (choices[0].get("message") or {}).get("content", "")
+        content = choices[0].message.content or ""
         return extract_json_object(content)
+
+
+def normalize_base_url(base_url: str = "", endpoint: str = "") -> str:
+    value = (base_url or endpoint or "").strip().rstrip("/")
+    suffix = "/chat/completions"
+    if value.endswith(suffix):
+        value = value[: -len(suffix)]
+    return value
 
 
 def _optional_float(value: Any) -> float | None:

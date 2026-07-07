@@ -34,15 +34,31 @@ The current priority is not perfect prompt accuracy. The priority is validating 
 
 ## Configure LLM
 
-Edit `config.yaml` or set environment variables. The default config follows the previous project style and points to qwen32b through an OpenAI-compatible endpoint:
+Edit `config.yaml` or set environment variables. The default config follows the mentor-provided OpenAI SDK-compatible qwen3 API:
 
 ```bash
-export LLM_ENDPOINT=http://localhost:8850/v1/chat/completions
-export LLM_API_KEY=EMPTY
-export LLM_MODEL=qwen3-32b
+export LLM_BASE_URL=http://10.67.43.7:12345/v1
+export LLM_API_KEY=sk-1234
+export LLM_MODEL=qwen3
 ```
 
-The client is OpenAI-compatible and calls `/chat/completions`.
+The client uses the OpenAI SDK style:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(api_key="sk-1234", base_url="http://10.67.43.7:12345/v1")
+completion = client.chat.completions.create(
+    model="qwen3",
+    messages=[{"role": "user", "content": "..."}],
+)
+```
+
+Install dependencies if needed:
+
+```bash
+pip install -r requirements.txt
+```
 
 ## Run Demo
 
