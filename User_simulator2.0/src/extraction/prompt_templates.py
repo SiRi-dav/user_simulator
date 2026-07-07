@@ -35,7 +35,21 @@ Meaning:
 For each point, output the Point schema.
 Return JSON:
 {{
-  "points": [...]
+  "points": [
+    {{
+      "point_id": "...",
+      "source_case_id": "...",
+      "content": "...",
+      "source_field": "case_name | text",
+      "source_quote": "...",
+      "point_type": "user_facing | diagnostic | solution | external",
+      "grounding_type": "explicit | inferred",
+      "trigger": ["..."],
+      "visibility": "opening_available | ask_triggered | judge_only | external_only",
+      "leakage_risk": "low | medium | high",
+      "reason": "..."
+    }}
+  ]
 }}
 Reasoning steps to follow internally:
 1. Identify what the user can directly observe in the target case.
