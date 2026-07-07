@@ -117,7 +117,6 @@ class BlindUserCaseView(BaseModel):
     surface_problem: str
     opening_intent: str
     user_facing_points: List[Point]
-    forbidden_content: List[str]
 
 
 class KnowledgeRoadmapArtifact(BaseModel):

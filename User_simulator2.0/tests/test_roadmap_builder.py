@@ -44,6 +44,7 @@ def test_case_analysis_outputs_are_split_for_blind_and_knowledge_modules():
     assert blind_view.case_id == "CASE_001"
     assert blind_view.surface_problem
     assert not hasattr(blind_view, "solution_points")
+    assert not hasattr(blind_view, "forbidden_content")
     assert knowledge_artifact.roadmap.target_case_id == "CASE_001"
     assert knowledge_artifact.roadmap.solution_points[0].content
     assert not hasattr(knowledge_artifact.roadmap.solution_points[0], "source_quote")

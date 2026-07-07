@@ -55,7 +55,7 @@
 
 这些文件刻意分开：Blind User 看安全视图，Knowledge Module 看紧凑 runtime roadmap，完整分析材料只进 debug 文件。
 
-`blind_user_case_views.jsonl` 只包含用户问题、开场意图、用户可见 facts 和 forbidden content。
+`blind_user_case_views.jsonl` 只包含用户问题、开场意图和用户可见 facts，不包含 forbidden solution 文本。
 
 `knowledge_roadmaps.jsonl` 包含紧凑 runtime roadmap，只保留 Knowledge Module 在线决策需要的信息。
 
@@ -597,7 +597,7 @@ Blind User prompt 会明确要求模拟用户带着真实解决问题的动机�
 - 被追问时，如果 roadmap 允许，就补充有助于排障的信息；
 - 被要求操作时，如果 instruction 允许，就追问怎么做或表示会尝试；
 - assistant 问偏时，用户会把对话拉回自己的问题；
-- 但所有表达都不能突破 `allowed_content` 和 `forbidden_content`。
+- 但所有表达都不能突破 `allowed_content`。具体 forbidden solution 文本不会直接传给 Blind User，只会以抽象禁区标签提示。
 
 Blind User 的限制：
 
@@ -827,7 +827,7 @@ BehaviorTaxonomy
 
 ### `outputs/blind_user_case_views.jsonl`
 
-保存每个 case 给 Blind User 的安全视图。这个文件不包含完整 roadmap，也不包含 solution points。
+保存每个 case 给 Blind User 的安全视图。这个文件不包含完整 roadmap、solution points，也不包含具体 forbidden solution 文本。
 
 ### `outputs/knowledge_roadmaps.jsonl`
 

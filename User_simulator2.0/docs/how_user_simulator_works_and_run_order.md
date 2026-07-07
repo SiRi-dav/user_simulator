@@ -291,8 +291,9 @@ case_id
 surface_problem
 opening_intent
 user_facing_points
-forbidden_content
 ```
+
+它不包含 solution points、external case details，也不包含具体 forbidden solution 文本，避免 Blind User 作弊。
 
 `knowledge_roadmaps.jsonl` 每一行是给 Knowledge Module 的紧凑路书，包括：
 

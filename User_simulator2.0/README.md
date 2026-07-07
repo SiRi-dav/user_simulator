@@ -189,7 +189,8 @@ These two final artifact files are upserted by `case_id`: newly analyzed cases a
 - surface problem
 - opening intent
 - user-facing points
-- forbidden content
+
+It does not contain solution points, external case details, or concrete forbidden solution text.
 
 `knowledge_roadmaps.jsonl` is for Knowledge Module and runtime control. It contains:
 

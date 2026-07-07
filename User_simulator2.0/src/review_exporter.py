@@ -108,10 +108,6 @@ def render_case_review(
                 "### User-Facing Points",
                 "",
                 render_points(blind_view.user_facing_points),
-                "",
-                "### Forbidden Content",
-                "",
-                render_list(blind_view.forbidden_content),
             ]
         )
     else:

@@ -334,7 +334,6 @@ def build_blind_user_view(roadmap: Roadmap) -> BlindUserCaseView:
         surface_problem=roadmap.surface_problem,
         opening_intent=roadmap.opening_intent,
         user_facing_points=roadmap.user_facing_points,
-        forbidden_content=roadmap.forbidden_content,
     )
 
 
