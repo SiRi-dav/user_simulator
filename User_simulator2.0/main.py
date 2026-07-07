@@ -269,15 +269,19 @@ def load_knowledge_roadmaps(path: Path) -> dict[str, KnowledgeRoadmapArtifact]:
 
 
 def load_employee_personas(path: Path) -> list[EmployeePersona]:
-    if not path.exists():
+    fallback_path = Path(__file__).resolve().parent / "data" / "manual_seed_employee_personas.jsonl"
+    source_path = path if path.exists() else fallback_path
+    if not source_path.exists():
         return []
-    return [EmployeePersona(**record) for record in read_jsonl(path)]
+    return [EmployeePersona(**record) for record in read_jsonl(source_path)]
 
 
 def load_behavior_taxonomy(path: Path) -> list[BehaviorTaxonomy]:
-    if not path.exists():
+    fallback_path = Path(__file__).resolve().parent / "data" / "manual_seed_user_behavior_taxonomy.jsonl"
+    source_path = path if path.exists() else fallback_path
+    if not source_path.exists():
         return []
-    return [BehaviorTaxonomy(**record) for record in read_jsonl(path)]
+    return [BehaviorTaxonomy(**record) for record in read_jsonl(source_path)]
 
 
 def select_employee_persona(personas: list[EmployeePersona], persona_id: str | None) -> EmployeePersona | None:

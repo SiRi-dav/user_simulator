@@ -428,7 +428,58 @@ solution 操作类似的 case
 outputs/related_cases.jsonl
 ```
 
-### 10.4 PointExtractor
+### 10.4 人工种子用户行为版本
+
+为了避免只分析 20 条历史对话时行为模式不稳定，项目内置了一版人工种子行为资产：
+
+```text
+data/manual_seed_employee_personas.jsonl
+data/manual_seed_user_behavior_taxonomy.jsonl
+```
+
+这版 persona 的核心设定是：
+
+```text
+真实想解决问题
+低技术熟练度
+愿意配合
+不主动泄露诊断原因和解决方案
+被问到才逐步释放信息
+需要具体操作步骤
+方向不对时会纠正
+解决后会确认，没解决会继续求助
+```
+
+这版 behavior taxonomy 包含 6 类：
+
+```text
+1. 陈述或继续澄清问题
+2. 回答客服并释放信息
+3. 询问具体操作办法
+4. 尝试操作并反馈结果
+5. 方向不符时纠正或拉回问题
+6. 确认解决或继续求助
+```
+
+runtime 读取顺序：
+
+```text
+优先读取 outputs/employee_personas.jsonl
+如果不存在，则读取 data/manual_seed_employee_personas.jsonl
+
+优先读取 outputs/user_behavior_taxonomy.jsonl
+如果不存在，则读取 data/manual_seed_user_behavior_taxonomy.jsonl
+```
+
+也就是说，如果已经跑过 `mine-behavior`，`simulate` 会优先用挖掘结果；如果没跑过或删除了 outputs 里的行为文件，`simulate` 会自动使用人工种子版本。
+
+如果想强制使用人工种子 persona，可以运行：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --persona_id persona_real_problem_low_tech --max_turns 8
+```
+
+### 10.5 PointExtractor
 
 文件：
 

@@ -851,9 +851,38 @@ BehaviorTaxonomy
 
 保存从历史对话中挖掘出的真实员工 persona library。
 
+如果这个文件不存在，runtime 会自动读取人工种子版本：
+
+```text
+data/manual_seed_employee_personas.jsonl
+```
+
+内置 persona id：
+
+```text
+persona_real_problem_low_tech
+```
+
 ### `outputs/user_behavior_taxonomy.jsonl`
 
 保存从历史对话中挖掘出的用户行为分类与 simulator policy hint。
+
+如果这个文件不存在，runtime 会自动读取人工种子版本：
+
+```text
+data/manual_seed_user_behavior_taxonomy.jsonl
+```
+
+人工种子 taxonomy 包含：
+
+```text
+陈述或继续澄清问题
+回答客服并释放信息
+询问具体操作办法
+尝试操作并反馈结果
+方向不符时纠正或拉回问题
+确认解决或继续求助
+```
 
 ## 15. Runtime 行为优先级
 

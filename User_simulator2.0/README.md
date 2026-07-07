@@ -142,7 +142,13 @@ Simulation can use mined personas:
 python main.py simulate --case_id <真实案例ID> --persona_id persona_xxx
 ```
 
-If `--persona_id` is omitted and `outputs/employee_personas.jsonl` exists, the first mined persona is used. If no mined persona exists, the built-in `--persona` value is used.
+If `--persona_id` is omitted and `outputs/employee_personas.jsonl` exists, the first mined persona is used. If no mined persona exists, the simulator falls back to the manual seed persona in `data/manual_seed_employee_personas.jsonl`.
+
+To force the manual seed persona:
+
+```bash
+python main.py simulate --case_id <真实案例ID> --persona_id persona_real_problem_low_tech
+```
 
 ## Batch Case Analysis
 
