@@ -17,6 +17,20 @@ class SparsePointLLMClient(MockLLMClient):
         return super().generate_json(system_prompt, user_prompt, schema_name, temperature)
 
 
+class SparseVerificationLLMClient(MockLLMClient):
+    def generate_json(self, system_prompt, user_prompt, schema_name=None, temperature=0.2):
+        if schema_name == "PointVerificationResult":
+            return {
+                "verified_points": [
+                    {"point_id": "P1"},
+                    {"point_id": "DI_001", "content": "上下文可能暗示此点", "visibility": "hidden"},
+                ],
+                "dropped_points": [],
+                "warnings": [{"point_id": "DI_001", "warning": "context implies it"}],
+            }
+        return super().generate_json(system_prompt, user_prompt, schema_name, temperature)
+
+
 def test_point_extraction_returns_four_types():
     llm = MockLLMClient()
     target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
@@ -47,3 +61,16 @@ def test_point_extraction_fills_defaults_for_sparse_llm_points():
     assert points[1].visibility == "hidden"
     assert points[1].grounding_type == "explicit"
     assert points[2].leakage_risk == "high"
+
+
+def test_point_verifier_normalizes_sparse_points_and_dict_warnings():
+    target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
+    points = PointExtractor(MockLLMClient()).extract_points(target, [])
+
+    result = PointVerifier(SparseVerificationLLMClient()).verify_points(target, [], points)
+
+    assert result.verified_points[0].source_case_id == "CASE_001"
+    assert result.verified_points[1].point_id == "DI_001"
+    assert result.verified_points[1].source_field == "text"
+    assert "DI_001" in result.warnings[0]
+    assert "context implies it" in result.warnings[0]
