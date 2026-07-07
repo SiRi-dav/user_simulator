@@ -414,10 +414,32 @@ retrieve(
 
 职责：
 
-- 输入 target case、queries、候选 cases
-- 让 LLM 选择 related cases
-- 不用关键词规则判断 relatedness
+- 输入 target case、queries、全量 case library
+- 先用本地快速召回从全量案例库里筛出 `candidate_top_n` 个候选，默认 50
+- 再让 LLM 只从这 50 个候选里选择最终 related cases，默认最多 5 个
+- 本地召回只负责缩小候选范围，不负责最终 relatedness 判断
 - 写入 `outputs/related_cases.jsonl`
+
+为什么必须这样做：
+
+```text
+全案例库
+  -> 本地快速召回 top 50
+  -> LLM 精选 related cases top 5
+```
+
+如果案例库达到几百万行，不能把全库直接塞进 LLM prompt。否则会非常慢，并且很容易超过上下文长度。
+
+这里的“反向 RAG”可以理解为：
+
+```text
+不是让 LLM 直接阅读全案例库
+而是先把 target case 变成多个检索方向
+再用这些方向从案例库里召回候选 case
+最后让 LLM 对候选 case 做精选和解释
+```
+
+当前实现是轻量版反向 RAG：`QueryGenerator` 生成检索方向，`LocalCandidateRecall` 做本地候选召回，`RelatedCaseRetriever` 调 LLM 做最终选择。
 
 ### `prompt_templates.py`
 

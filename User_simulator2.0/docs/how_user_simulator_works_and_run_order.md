@@ -392,7 +392,26 @@ src/retrieval/related_case_retriever.py
 作用：
 
 ```text
-把 target case、queries、candidate cases 交给 LLM，让 LLM 选择 related cases。
+先从全案例库本地快速召回 top 50 candidate cases，
+再把 target case、queries、top 50 candidates 交给 LLM，
+让 LLM 选择最终 related cases。
+```
+
+注意：
+
+```text
+本地快速召回不是最终判断。
+它只负责把 300 万行级别的案例库缩小到几十条候选。
+最终哪些 case 算 related cases，仍然由 LLM 决定。
+```
+
+这一步可以理解成轻量版“反向 RAG”：
+
+```text
+target case
+  -> LLM 生成多个检索方向
+  -> 本地检索从全案例库召回 top 50
+  -> LLM 从 top 50 里精选 related cases
 ```
 
 related cases 用来构造混淆知识空间，例如：

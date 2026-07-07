@@ -32,3 +32,7 @@ dialogue_fields:
   turns: "text"
   speaker: "speaker"
   text: "text"
+
+retrieval:
+  candidate_top_n: 50
+  related_top_k: 5

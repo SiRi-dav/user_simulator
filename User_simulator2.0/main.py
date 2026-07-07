@@ -129,7 +129,7 @@ def run_analyze_cases(
     knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
     for index, target_case in enumerate(selected_cases, 1):
         print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
-        blind_view, knowledge_artifact = build_case_analysis_artifacts(target_case, cases, llm_client, logger)
+        blind_view, knowledge_artifact = build_case_analysis_artifacts(target_case, cases, llm_client, logger, config)
         blind_user_views.append(blind_view)
         knowledge_artifacts.append(knowledge_artifact)
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
@@ -223,9 +223,16 @@ def build_case_analysis_artifacts(
     all_cases: list[Case],
     llm_client: OpenAICompatibleClient,
     logger: OutputLogger,
+    config: Dict[str, Any] | None = None,
 ) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact]:
     queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
-    related_cases = RelatedCaseRetriever(llm_client, logger).retrieve(target_case, queries, all_cases)
+    retrieval_config = (config or {}).get("retrieval", {})
+    related_cases = RelatedCaseRetriever(
+        llm_client,
+        logger,
+        top_k=int(retrieval_config.get("related_top_k", 5)),
+        recall_top_n=int(retrieval_config.get("candidate_top_n", 50)),
+    ).retrieve(target_case, queries, all_cases)
     points = PointExtractor(llm_client, logger).extract_points(target_case, related_cases)
     verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
     relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)

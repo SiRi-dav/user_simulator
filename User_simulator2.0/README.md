@@ -181,12 +181,28 @@ It writes:
 
 `simulate` reads `knowledge_roadmaps.jsonl`. If the selected case has not been analyzed yet, `simulate` stops and tells you to run `analyze-cases` first.
 
+## Related Case Retrieval
+
+The case library can be very large, so `analyze-cases` does not send the full library to the LLM.
+
+Current flow:
+
+```text
+full case library
+  -> local fast candidate recall top 50
+  -> LLM selects final related cases top 5
+```
+
+The local recall step is only candidate narrowing. It does not make the final related-case decision. The final selection is still made by the LLM.
+
+This is close to a reverse-RAG shape: each case is treated as a retrieval document, the target case is converted into several retrieval directions by the LLM, local retrieval recalls likely candidate documents, and the LLM then reranks/selects useful related cases.
+
 ## Outputs
 
 All intermediate results are saved as JSONL records under `outputs/`.
 
 - `generated_queries.jsonl`: reverse RAG retrieval queries
-- `related_cases.jsonl`: LLM selected related cases
+- `related_cases.jsonl`: locally recalled candidates and LLM selected related cases
 - `points.jsonl`: extracted knowledge points
 - `verified_points.jsonl`: verified and dropped points
 - `relations.jsonl`: point relations
