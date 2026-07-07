@@ -187,6 +187,28 @@ It writes:
 
 `simulate` reads `knowledge_roadmaps.jsonl`. If the selected case has not been analyzed yet, `simulate` stops and tells you to run `analyze-cases` first.
 
+## Export Human-Readable Review
+
+JSONL outputs are optimized for code, not manual review. Export Markdown review files with:
+
+```bash
+python main.py export-review --case_id <真实案例ID>
+```
+
+Or export all analyzed cases:
+
+```bash
+python main.py export-review --all
+```
+
+Files are written to:
+
+```text
+outputs/review/
+```
+
+The export includes Blind User visible content, knowledge roadmap, diagnostic/solution/external points, related cases, retrieval queries, warnings, and behavior assets.
+
 ## Related Case Retrieval
 
 The case library can be very large, so `analyze-cases` does not send the full library to the LLM.

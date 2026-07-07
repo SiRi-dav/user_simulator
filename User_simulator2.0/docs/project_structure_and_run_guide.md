@@ -884,6 +884,25 @@ data/manual_seed_user_behavior_taxonomy.jsonl
 确认解决或继续求助
 ```
 
+### `outputs/review/`
+
+保存人工可读 Markdown review 文件。由下面命令生成：
+
+```bash
+python3 main.py export-review --case_id <真实案例ID>
+python3 main.py export-review --all
+```
+
+包含：
+
+```text
+index.md
+behavior_assets.md
+<case_id>.md
+```
+
+用于人工检查 Blind User 可见信息、roadmap、solution point、external point、related cases 和 warnings。
+
 ## 15. Runtime 行为优先级
 
 runtime 中不同信息源的优先级如下：

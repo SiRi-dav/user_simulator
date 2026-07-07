@@ -329,6 +329,48 @@ User: 是打开以后就直接退出来了，还没到登录那一步。
 - LLM 判断 assistant 命中目标 solution；
 - 或达到最大轮数。
 
+## 9.5 导出人工可读 Review
+
+JSONL 文件适合程序读，不适合人工检查。分析完 case 后，可以把关键输出导出成 Markdown：
+
+```bash
+python3 main.py export-review --case_id <真实案例ID>
+```
+
+或者导出所有已经完成分析的 case：
+
+```bash
+python3 main.py export-review --all
+```
+
+输出目录：
+
+```text
+outputs/review/
+```
+
+单个 case 的 review 文件会整理：
+
+```text
+Blind User 能看到什么
+Knowledge Roadmap
+Diagnostic Points
+Solution Points
+External / Confusing Points
+Related Cases
+Retrieval Queries
+Warnings
+```
+
+同时会生成：
+
+```text
+outputs/review/index.md
+outputs/review/behavior_assets.md
+```
+
+建议人工检查时优先看 `outputs/review/index.md`，再打开具体 case 的 Markdown。
+
 ## 10. analyze-cases 内部做了什么
 
 当运行：

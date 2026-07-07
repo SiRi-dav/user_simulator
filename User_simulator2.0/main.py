@@ -15,6 +15,7 @@ from src.retrieval.query_generator import QueryGenerator
 from src.retrieval.related_case_retriever import RelatedCaseRetriever
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
+from src.review_exporter import ReviewExporter
 from src.runtime.simulator import Simulator
 from src.schemas import BehaviorTaxonomy, BlindUserCaseView, Case, EmployeePersona, KnowledgeRoadmapArtifact, Roadmap, model_to_dict
 from src.utils.jsonl import read_jsonl, write_jsonl
@@ -45,6 +46,9 @@ def main() -> None:
     if command == "analyze-cases":
         run_analyze_cases(args, config, root, output_dir, logger, parser)
         return
+    if command == "export-review":
+        run_export_review(args, output_dir, parser)
+        return
     run_simulate(args, config, root, output_dir, logger, parser)
 
 
@@ -68,8 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
     mine.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
     mine.add_argument("--max_dialogues", type=int, default=50)
 
+    review = subparsers.add_parser("export-review", help="Export generated JSONL artifacts into human-readable Markdown.")
+    review.add_argument("--config", default="config.yaml")
+    review.add_argument("--case_id")
+    review.add_argument("--all", action="store_true", help="Export all cases in knowledge_roadmaps.jsonl.")
+
     # Backward-compatible direct invocation: python main.py --case_id ...
-    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "analyze-cases", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "analyze-cases", "export-review", "-h", "--help"}:
         add_simulate_args(parser)
     return parser
 
@@ -205,6 +214,25 @@ def run_simulate(
         print(f"[STOP: max_turns={args.max_turns}]")
 
 
+def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:
+    if not args.case_id and not args.all:
+        parser.error("export-review requires --case_id <CASE_ID> or --all")
+    knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
+    if not knowledge_artifacts:
+        parser.error(f"No knowledge roadmaps found: {output_dir / 'knowledge_roadmaps.jsonl'}")
+    blind_views = load_blind_user_case_views(output_dir / "blind_user_case_views.jsonl")
+    employee_personas = load_employee_personas(output_dir / "employee_personas.jsonl")
+    behavior_taxonomy = load_behavior_taxonomy(output_dir / "user_behavior_taxonomy.jsonl")
+    exporter = ReviewExporter(output_dir, knowledge_artifacts, blind_views, employee_personas, behavior_taxonomy)
+    if args.all:
+        paths = exporter.export_cases()
+    else:
+        paths = [exporter.export_case(args.case_id)]
+        exporter.export_index()
+        exporter.export_behavior_review()
+    print(f"Exported {len(paths)} case review file(s) to: {output_dir / 'review'}")
+
+
 def load_configured_cases(config: Dict[str, Any], root: Path, parser: argparse.ArgumentParser) -> list[Case]:
     cases_config = config.get("paths", {}).get("cases")
     if not cases_config:
@@ -266,6 +294,14 @@ def load_knowledge_roadmaps(path: Path) -> dict[str, KnowledgeRoadmapArtifact]:
         artifact = KnowledgeRoadmapArtifact(**record)
         artifacts[artifact.case_id] = artifact
     return artifacts
+
+
+def load_blind_user_case_views(path: Path) -> dict[str, BlindUserCaseView]:
+    views: dict[str, BlindUserCaseView] = {}
+    for record in read_jsonl(path):
+        view = BlindUserCaseView(**record)
+        views[view.case_id] = view
+    return views
 
 
 def load_employee_personas(path: Path) -> list[EmployeePersona]:
