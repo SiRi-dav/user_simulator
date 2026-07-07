@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from src.schemas import BehaviorTaxonomy, BlindUserCaseView, EmployeePersona, KnowledgeRoadmapArtifact, Point
+from src.schemas import BehaviorTaxonomy, BlindUserCaseView, CaseAnalysisDebugArtifact, EmployeePersona, KnowledgeRoadmapArtifact, Point, RuntimePoint
 
 
 class ReviewExporter:
@@ -14,6 +14,7 @@ class ReviewExporter:
         blind_views: dict[str, BlindUserCaseView],
         employee_personas: list[EmployeePersona],
         behavior_taxonomy: list[BehaviorTaxonomy],
+        debug_artifacts: dict[str, CaseAnalysisDebugArtifact] | None = None,
     ):
         self.output_dir = output_dir
         self.review_dir = output_dir / "review"
@@ -21,15 +22,17 @@ class ReviewExporter:
         self.blind_views = blind_views
         self.employee_personas = employee_personas
         self.behavior_taxonomy = behavior_taxonomy
+        self.debug_artifacts = debug_artifacts or {}
 
     def export_case(self, case_id: str) -> Path:
         artifact = self.knowledge_artifacts.get(case_id)
         if artifact is None:
             raise ValueError(f"case_id not found in knowledge_roadmaps.jsonl: {case_id}")
         blind_view = self.blind_views.get(case_id)
+        debug_artifact = self.debug_artifacts.get(case_id)
         path = self.review_dir / f"{safe_filename(case_id)}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_case_review(artifact, blind_view), encoding="utf-8")
+        path.write_text(render_case_review(artifact, blind_view, debug_artifact), encoding="utf-8")
         return path
 
     def export_cases(self, case_ids: Iterable[str] | None = None) -> list[Path]:
@@ -50,17 +53,18 @@ class ReviewExporter:
         ]
         for case_id in sorted(self.knowledge_artifacts):
             artifact = self.knowledge_artifacts[case_id]
+            debug_artifact = self.debug_artifacts.get(case_id)
             roadmap = artifact.roadmap
             lines.append(
                 "| {case_id} | {title} | {surface_problem} | {user_facing} | {diagnostic} | {solution} | {external} | {warnings} |".format(
                     case_id=escape_md(case_id),
-                    title=escape_md(artifact.target_case.title),
+                    title=escape_md(debug_artifact.target_case.title if debug_artifact else artifact.title),
                     surface_problem=escape_md(roadmap.surface_problem),
                     user_facing=len(roadmap.user_facing_points),
                     diagnostic=len(roadmap.diagnostic_points),
                     solution=len(roadmap.solution_points),
                     external=len(roadmap.external_points),
-                    warnings=len(artifact.warnings),
+                    warnings=len(debug_artifact.warnings) if debug_artifact else 0,
                 )
             )
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -76,23 +80,25 @@ class ReviewExporter:
         return path
 
 
-def render_case_review(artifact: KnowledgeRoadmapArtifact, blind_view: BlindUserCaseView | None) -> str:
+def render_case_review(
+    artifact: KnowledgeRoadmapArtifact,
+    blind_view: BlindUserCaseView | None,
+    debug_artifact: CaseAnalysisDebugArtifact | None = None,
+) -> str:
     roadmap = artifact.roadmap
     lines = [
-        f"# {artifact.case_id} {artifact.target_case.title}",
+        f"# {artifact.case_id} {debug_artifact.target_case.title if debug_artifact else artifact.title}",
         "",
         "## Target Case",
         "",
         f"- case_id: `{artifact.case_id}`",
-        f"- title: {artifact.target_case.title}",
-        "",
-        "### Case Text",
-        "",
-        truncate_block(artifact.target_case.phenomenon),
+        f"- title: {debug_artifact.target_case.title if debug_artifact else artifact.title}",
         "",
         "## Blind User View",
         "",
     ]
+    if debug_artifact:
+        lines.extend(["### Case Text", "", truncate_block(debug_artifact.target_case.phenomenon), ""])
     if blind_view:
         lines.extend(
             [
@@ -120,15 +126,15 @@ def render_case_review(artifact: KnowledgeRoadmapArtifact, blind_view: BlindUser
             "",
             "### Diagnostic Points",
             "",
-            render_points(roadmap.diagnostic_points),
+            render_runtime_points(roadmap.diagnostic_points),
             "",
             "### Solution Points",
             "",
-            render_points(roadmap.solution_points),
+            render_runtime_points(roadmap.solution_points),
             "",
             "### External / Confusing Points",
             "",
-            render_points(roadmap.external_points),
+            render_runtime_points(roadmap.external_points),
             "",
             "### Target Route",
             "",
@@ -138,17 +144,9 @@ def render_case_review(artifact: KnowledgeRoadmapArtifact, blind_view: BlindUser
             "",
             render_routes(roadmap.external_routes),
             "",
-            "## Related Cases",
+            "## Debug / Review Details",
             "",
-            render_related_cases(artifact),
-            "",
-            "## Retrieval Queries",
-            "",
-            render_queries(artifact),
-            "",
-            "## Warnings",
-            "",
-            render_list(artifact.warnings),
+            render_debug_details(debug_artifact),
         ]
     )
     return "\n".join(lines) + "\n"
@@ -171,7 +169,40 @@ def render_points(points: list[Point]) -> str:
     return "\n".join(lines)
 
 
-def render_related_cases(artifact: KnowledgeRoadmapArtifact) -> str:
+def render_runtime_points(points: list[RuntimePoint]) -> str:
+    if not points:
+        return "_None._"
+    lines = []
+    for point in points:
+        trigger = ", ".join(point.trigger) if point.trigger else "N/A"
+        lines.append(f"- `{point.point_id}` [{point.point_type} / {point.visibility}] {point.content} trigger={trigger}")
+    return "\n".join(lines)
+
+
+def render_debug_details(debug_artifact: CaseAnalysisDebugArtifact | None) -> str:
+    if debug_artifact is None:
+        return "_No case_analysis_debug.jsonl entry found. Runtime roadmap is available above._"
+    lines = [
+        "### Full Verified Points",
+        "",
+        render_points(debug_artifact.verified_points),
+        "",
+        "### Related Cases",
+        "",
+        render_related_cases(debug_artifact),
+        "",
+        "### Retrieval Queries",
+        "",
+        render_queries(debug_artifact),
+        "",
+        "### Warnings",
+        "",
+        render_list(debug_artifact.warnings),
+    ]
+    return "\n".join(lines)
+
+
+def render_related_cases(artifact: CaseAnalysisDebugArtifact) -> str:
     if not artifact.related_cases:
         return "_None._"
     lines = ["| case_id | title | text preview |", "|---|---|---|"]
@@ -180,7 +211,7 @@ def render_related_cases(artifact: KnowledgeRoadmapArtifact) -> str:
     return "\n".join(lines)
 
 
-def render_queries(artifact: KnowledgeRoadmapArtifact) -> str:
+def render_queries(artifact: CaseAnalysisDebugArtifact) -> str:
     if not artifact.retrieval_queries:
         return "_None._"
     lines = ["| type | query | reason |", "|---|---|---|"]

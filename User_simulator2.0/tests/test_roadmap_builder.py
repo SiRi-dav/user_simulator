@@ -40,11 +40,14 @@ def test_case_analysis_outputs_are_split_for_blind_and_knowledge_modules():
     llm = MockLLMClient()
     target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
     related = Case(case_id="CASE_002", title="Outlook 登录失败", phenomenon="密码失败", solution="重置密码")
-    blind_view, knowledge_artifact = build_case_analysis_artifacts(target, [target, related], llm, logger=None)
+    blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(target, [target, related], llm, logger=None)
     assert blind_view.case_id == "CASE_001"
     assert blind_view.surface_problem
     assert not hasattr(blind_view, "solution_points")
     assert knowledge_artifact.roadmap.target_case_id == "CASE_001"
+    assert knowledge_artifact.roadmap.solution_points[0].content
+    assert not hasattr(knowledge_artifact.roadmap.solution_points[0], "source_quote")
+    assert debug_artifact.related_cases[0].case_id == "CASE_002"
 
 
 def test_roadmap_builder_fills_sparse_point_groups_from_verified_points():

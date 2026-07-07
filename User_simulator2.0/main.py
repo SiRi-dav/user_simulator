@@ -18,7 +18,21 @@ from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.review_exporter import ReviewExporter
 from src.runtime.simulator import Simulator
-from src.schemas import BehaviorTaxonomy, BlindUserCaseView, Case, EmployeePersona, KnowledgeRoadmapArtifact, Roadmap, model_to_dict
+from src.schemas import (
+    BehaviorTaxonomy,
+    BlindUserCaseView,
+    Case,
+    CaseAnalysisDebugArtifact,
+    EmployeePersona,
+    KnowledgeRoadmapArtifact,
+    Point,
+    Relation,
+    Roadmap,
+    RuntimePoint,
+    RuntimeRelation,
+    RuntimeRoadmap,
+    model_to_dict,
+)
 from src.utils.jsonl import read_jsonl, write_jsonl
 from src.utils.logging import OutputLogger
 
@@ -143,23 +157,39 @@ def run_analyze_cases(
     llm_client = OpenAICompatibleClient.from_config(config)
     blind_user_views: list[BlindUserCaseView] = []
     knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
+    debug_artifacts: list[CaseAnalysisDebugArtifact] = []
     for index, target_case in enumerate(selected_cases, 1):
         print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
-        blind_view, knowledge_artifact = build_case_analysis_artifacts(target_case, cases, llm_client, logger, config)
+        blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
+            target_case,
+            cases,
+            llm_client,
+            logger,
+            config,
+        )
         blind_user_views.append(blind_view)
         knowledge_artifacts.append(knowledge_artifact)
+        debug_artifacts.append(debug_artifact)
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
     knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
+    debug_path = output_dir / "case_analysis_debug.jsonl"
     total_blind_views = upsert_jsonl_by_key(blind_view_path, [model_to_dict(view) for view in blind_user_views], "case_id")
     total_knowledge_artifacts = upsert_jsonl_by_key(
         knowledge_path,
         [model_to_dict(artifact) for artifact in knowledge_artifacts],
         "case_id",
     )
+    total_debug_artifacts = upsert_jsonl_by_key(
+        debug_path,
+        [model_to_dict(artifact) for artifact in debug_artifacts],
+        "case_id",
+    )
     print(f"Upserted {len(blind_user_views)} blind-user case views to: {blind_view_path}")
     print(f"Total blind-user case views: {total_blind_views}")
-    print(f"Upserted {len(knowledge_artifacts)} knowledge roadmaps to: {knowledge_path}")
+    print(f"Upserted {len(knowledge_artifacts)} compact runtime roadmaps to: {knowledge_path}")
     print(f"Total knowledge roadmaps: {total_knowledge_artifacts}")
+    print(f"Upserted {len(debug_artifacts)} debug artifacts to: {debug_path}")
+    print(f"Total debug artifacts: {total_debug_artifacts}")
 
 
 def run_simulate(
@@ -234,9 +264,10 @@ def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argpar
     if not knowledge_artifacts:
         parser.error(f"No knowledge roadmaps found: {output_dir / 'knowledge_roadmaps.jsonl'}")
     blind_views = load_blind_user_case_views(output_dir / "blind_user_case_views.jsonl")
+    debug_artifacts = load_case_analysis_debug_artifacts(output_dir / "case_analysis_debug.jsonl")
     employee_personas = load_employee_personas(output_dir / "employee_personas.jsonl")
     behavior_taxonomy = load_behavior_taxonomy(output_dir / "user_behavior_taxonomy.jsonl")
-    exporter = ReviewExporter(output_dir, knowledge_artifacts, blind_views, employee_personas, behavior_taxonomy)
+    exporter = ReviewExporter(output_dir, knowledge_artifacts, blind_views, employee_personas, behavior_taxonomy, debug_artifacts)
     if args.all:
         paths = exporter.export_cases()
     else:
@@ -265,7 +296,7 @@ def build_case_analysis_artifacts(
     llm_client: OpenAICompatibleClient,
     logger: OutputLogger,
     config: Dict[str, Any] | None = None,
-) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact]:
+) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact, CaseAnalysisDebugArtifact]:
     queries = QueryGenerator(llm_client, logger).generate_queries(target_case)
     retrieval_config = (config or {}).get("retrieval", {})
     related_cases = RelatedCaseRetriever(
@@ -278,7 +309,12 @@ def build_case_analysis_artifacts(
     verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)
     relations = RelationBuilder(llm_client, logger).build_relations(verification.verified_points, target_case.case_id)
     roadmap = RoadmapBuilder(llm_client, logger).build_roadmap(target_case, verification.verified_points, relations)
-    return build_blind_user_view(roadmap), KnowledgeRoadmapArtifact(
+    runtime_artifact = KnowledgeRoadmapArtifact(
+        case_id=target_case.case_id,
+        title=target_case.title,
+        roadmap=build_runtime_roadmap(roadmap),
+    )
+    debug_artifact = CaseAnalysisDebugArtifact(
         case_id=target_case.case_id,
         target_case=target_case,
         retrieval_queries=queries,
@@ -289,6 +325,7 @@ def build_case_analysis_artifacts(
         relations=relations,
         roadmap=roadmap,
     )
+    return build_blind_user_view(roadmap), runtime_artifact, debug_artifact
 
 
 def build_blind_user_view(roadmap: Roadmap) -> BlindUserCaseView:
@@ -301,12 +338,58 @@ def build_blind_user_view(roadmap: Roadmap) -> BlindUserCaseView:
     )
 
 
+def build_runtime_roadmap(roadmap: Roadmap) -> RuntimeRoadmap:
+    return RuntimeRoadmap(
+        target_case_id=roadmap.target_case_id,
+        surface_problem=roadmap.surface_problem,
+        opening_intent=roadmap.opening_intent,
+        user_facing_points=[build_runtime_point(point) for point in roadmap.user_facing_points],
+        diagnostic_points=[build_runtime_point(point) for point in roadmap.diagnostic_points],
+        solution_points=[build_runtime_point(point) for point in roadmap.solution_points],
+        external_points=[build_runtime_point(point) for point in roadmap.external_points],
+        relations=[build_runtime_relation(relation) for relation in roadmap.relations],
+        target_route=roadmap.target_route,
+        external_routes=roadmap.external_routes,
+        forbidden_content=roadmap.forbidden_content,
+    )
+
+
+def build_runtime_point(point: Point) -> RuntimePoint:
+    return RuntimePoint(
+        point_id=point.point_id,
+        content=point.content,
+        point_type=point.point_type,
+        trigger=point.trigger,
+        visibility=point.visibility,
+    )
+
+
+def build_runtime_relation(relation: Relation) -> RuntimeRelation:
+    return RuntimeRelation(
+        from_point_id=relation.from_point_id,
+        to_point_id=relation.to_point_id,
+        relation_type=relation.relation_type,
+    )
+
+
 def load_knowledge_roadmaps(path: Path) -> dict[str, KnowledgeRoadmapArtifact]:
     artifacts: dict[str, KnowledgeRoadmapArtifact] = {}
     for record in read_jsonl(path):
-        artifact = KnowledgeRoadmapArtifact(**record)
+        artifact = parse_knowledge_roadmap_artifact(record)
         artifacts[artifact.case_id] = artifact
     return artifacts
+
+
+def parse_knowledge_roadmap_artifact(record: Dict[str, Any]) -> KnowledgeRoadmapArtifact:
+    if "target_case" in record:
+        title = str((record.get("target_case") or {}).get("title") or "")
+        roadmap = Roadmap(**record["roadmap"])
+        return KnowledgeRoadmapArtifact(
+            case_id=str(record["case_id"]),
+            title=title,
+            roadmap=build_runtime_roadmap(roadmap),
+        )
+    return KnowledgeRoadmapArtifact(**record)
 
 
 def load_blind_user_case_views(path: Path) -> dict[str, BlindUserCaseView]:
@@ -315,6 +398,14 @@ def load_blind_user_case_views(path: Path) -> dict[str, BlindUserCaseView]:
         view = BlindUserCaseView(**record)
         views[view.case_id] = view
     return views
+
+
+def load_case_analysis_debug_artifacts(path: Path) -> dict[str, CaseAnalysisDebugArtifact]:
+    artifacts: dict[str, CaseAnalysisDebugArtifact] = {}
+    for record in read_jsonl(path):
+        artifact = CaseAnalysisDebugArtifact(**record)
+        artifacts[artifact.case_id] = artifact
+    return artifacts
 
 
 def upsert_jsonl_by_key(path: Path, new_records: list[Dict[str, Any]], key: str) -> int:

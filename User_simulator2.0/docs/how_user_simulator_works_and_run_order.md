@@ -56,13 +56,15 @@ target case
 ```text
 outputs/blind_user_case_views.jsonl
 outputs/knowledge_roadmaps.jsonl
+outputs/case_analysis_debug.jsonl
 ```
 
-每个 case 会提前生成两份文件：
+每个 case 会提前生成三类文件：
 
 ```text
 blind_user_case_views.jsonl: 给 Blind User 看的用户问题、开场意图、可见事实
-knowledge_roadmaps.jsonl: 给 Knowledge Module 看的完整知识 roadmap
+knowledge_roadmaps.jsonl: 给 Knowledge Module/runtime 用的紧凑 roadmap
+case_analysis_debug.jsonl: 给人工审查/debug 用的完整分析材料
 ```
 
 这里说的 roadmap，不是给 Blind User 看的材料。它是 Knowledge Module 用来控制对话的信息范围：
@@ -292,14 +294,24 @@ user_facing_points
 forbidden_content
 ```
 
-`knowledge_roadmaps.jsonl` 每一行是给 Knowledge Module 的完整路书，包括：
+`knowledge_roadmaps.jsonl` 每一行是给 Knowledge Module 的紧凑路书，包括：
 
 ```text
-retrieval queries
-related cases
-verified points
-relations
-roadmap
+case_id
+title
+roadmap.surface_problem
+roadmap.opening_intent
+roadmap.user_facing_points / diagnostic_points / solution_points / external_points
+roadmap.target_route / external_routes
+roadmap.forbidden_content
+```
+
+紧凑 point 只保留 `point_id`、`content`、`point_type`、`trigger`、`visibility`。它不保存 `source_quote`、`reason`、完整 related case 文本、warnings 等审查信息。
+
+完整审查信息会写到：
+
+```text
+outputs/case_analysis_debug.jsonl
 ```
 
 后续 `simulate` 只读取 `knowledge_roadmaps.jsonl` 中对应 case 的 roadmap，不再现场重新跑 retrieval / extraction / roadmap。
@@ -669,9 +681,10 @@ outputs/roadmaps.jsonl
 ```text
 outputs/blind_user_case_views.jsonl
 outputs/knowledge_roadmaps.jsonl
+outputs/case_analysis_debug.jsonl
 ```
 
-`blind_user_case_views.jsonl` 用于人工检查 Blind User 能看到什么；`knowledge_roadmaps.jsonl` 是后续 `simulate` 的主要输入。这样在线模拟不需要每次重新跑 case analysis，也避免把完整 roadmap 混进 Blind User 视图。
+`blind_user_case_views.jsonl` 用于检查 Blind User 能看到什么；`knowledge_roadmaps.jsonl` 是后续 `simulate` 的主要输入；`case_analysis_debug.jsonl` 用于人工审查和 debug。这样在线模拟不需要每次重新跑 case analysis，也不会把完整调试材料混进 runtime 输入。
 
 ## 11. simulate 内部做了什么
 
@@ -689,9 +702,9 @@ simulate 只做 runtime 对话，不再现场执行 QueryGenerator / PointExtrac
 outputs/knowledge_roadmaps.jsonl
 ```
 
-找到对应 `case_id` 的预生成 Knowledge Module 路书，并从里面拿到完整 roadmap。
+找到对应 `case_id` 的预生成 Knowledge Module 路书，并从里面拿到紧凑 runtime roadmap。
 
-Blind User 不读取这个完整文件。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
+Blind User 不直接读取完整 debug 材料。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
 
 如果你想人工检查 Blind User 可见内容，看：
 

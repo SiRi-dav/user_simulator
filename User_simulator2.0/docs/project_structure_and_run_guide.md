@@ -51,12 +51,15 @@
 8. `RoadmapBuilder` 用 LLM 组装 roadmap
 9. 写入 `outputs/blind_user_case_views.jsonl`
 10. 写入 `outputs/knowledge_roadmaps.jsonl`
+11. 写入 `outputs/case_analysis_debug.jsonl`
 
-这两个文件刻意分开，避免 Blind User 误读完整 roadmap。
+这些文件刻意分开：Blind User 看安全视图，Knowledge Module 看紧凑 runtime roadmap，完整分析材料只进 debug 文件。
 
 `blind_user_case_views.jsonl` 只包含用户问题、开场意图、用户可见 facts 和 forbidden content。
 
-`knowledge_roadmaps.jsonl` 包含完整 roadmap，供 Knowledge Module 和 runtime 控制使用。
+`knowledge_roadmaps.jsonl` 包含紧凑 runtime roadmap，只保留 Knowledge Module 在线决策需要的信息。
+
+`case_analysis_debug.jsonl` 包含完整抽取、召回、校验、related cases 和 warnings，主要用于人工审查或 debug，不作为在线模拟主输入。
 
 第三阶段：在线模拟
 
@@ -270,7 +273,7 @@ paths:
 - `external_routes`
 - `forbidden_content`
 
-Blind User 不直接读取完整 roadmap。roadmap 主要给 Knowledge Module 使用。
+Blind User 不直接读取 runtime roadmap。roadmap 主要给 Knowledge Module 使用。
 
 ### `DialogueState`
 
@@ -828,16 +831,39 @@ BehaviorTaxonomy
 
 ### `outputs/knowledge_roadmaps.jsonl`
 
-保存每个 case 给 Knowledge Module/runtime 使用的完整路书。后续 `simulate` 默认读取这个文件，不再现场重新运行 retrieval、extraction、roadmap。
+保存每个 case 给 Knowledge Module/runtime 使用的紧凑路书。后续 `simulate` 默认读取这个文件，不再现场重新运行 retrieval、extraction、roadmap。
 
 每条 knowledge roadmap 包含：
 
 - target case
+- title
+- compact runtime roadmap
+
+compact runtime roadmap 只保留：
+
+- surface_problem
+- opening_intent
+- user_facing_points / diagnostic_points / solution_points / external_points
+- 每个 point 的 point_id、content、point_type、trigger、visibility
+- relation 的 from_point_id、to_point_id、relation_type
+- target_route / external_routes
+- forbidden_content
+
+它不再保存 `source_quote`、`reason`、完整 related case 文本、retrieval queries、dropped points、warnings 等审查信息。
+
+### `outputs/case_analysis_debug.jsonl`
+
+保存每个 case 的完整分析过程和审查材料，包括：
+
+- target case
 - retrieval queries
 - related cases
-- verified points
-- relations
-- roadmap
+- verified / dropped points
+- warnings
+- full relations
+- full roadmap
+
+这个文件主要服务人工审查和 debug，不是 `simulate` 的主输入。
 
 ### `outputs/simulation_logs.jsonl`
 
@@ -901,7 +927,7 @@ behavior_assets.md
 <case_id>.md
 ```
 
-用于人工检查 Blind User 可见信息、roadmap、solution point、external point、related cases 和 warnings。
+用于人工检查 Blind User 可见信息、runtime roadmap、solution point、external point、related cases 和 warnings。related cases 与 warnings 来自 `case_analysis_debug.jsonl`。
 
 ## 15. Runtime 行为优先级
 

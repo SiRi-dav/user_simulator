@@ -31,6 +31,8 @@ Important:
 - Do not leak judge-only solution points as normal user content.
 - Only output allowed_content and behavior instruction.
 - You must decide whether the assistant hit a case-internal point, case-external point, out-of-knowledge point, or target solution.
+- The Blind User should sound like a real employee, not like a case-library entry.
+- Rewrite allowed_content into plain user-speak. Do not copy raw case titles, document labels, source quotes, or bracketed taxonomy artifacts.
 - Return only valid JSON."""
 
 KNOWLEDGE_DECISION_USER = """Assistant latest reply:
@@ -71,6 +73,14 @@ Behavior rules:
 4. Never put judge-only solution text into allowed_content unless the assistant has already provided the matching solution and the user is confirming.
 5. Use the historical behavior taxonomy only to choose the reaction style. Roadmap factual constraints have higher priority than behavior taxonomy.
 6. Do not reveal any fact that is not allowed by the roadmap, even if the taxonomy suggests users often volunteer details.
+7. For clarification_question, allowed_content must answer the assistant's latest question first. Do not restate the whole original problem unless the assistant asked for it.
+8. For A/B or category questions, allowed_content should choose the closest known option from the roadmap, or say the user is not sure. Do not answer with unrelated symptoms.
+9. Keep allowed_content short: usually one sentence, maximum two short sentences.
+10. Remove case-library artifacts from allowed_content:
+    - no square-bracket labels like 【...】
+    - no parenthetical document/category suffixes like （原理图） unless they are necessary user-visible text
+    - no case_id, point_id, "source", "roadmap", "diagnostic point", or "solution point"
+    - no raw copied titles; convert them to natural wording
 Return JSON:
 {{
   "assistant_act": "...",
@@ -107,6 +117,8 @@ Important:
 - Do not reveal forbidden content.
 - Do not mention case_id.
 - Do not mention that you are a simulator.
+- Do not copy case-library wording mechanically.
+- Do not include bracketed labels, point labels, document-category parentheses, or debug-style wording.
 - Keep the reply short and natural.
 - Match the persona."""
 
@@ -130,6 +142,8 @@ Return JSON:
 Requirements:
 - Use only allowed_content.
 - Do not include forbidden_content.
+- Answer the assistant's latest question first. If the assistant asked "which file/type/system?", start with that answer.
+- Do not simply repeat the previous user message unless the assistant explicitly asks you to repeat it.
 - Keep the user's goal visible: they want the problem fixed or the next concrete step clarified.
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
 - If the assistant asks the user to do something and the instruction allows it, ask how to do it or say you will try it according to the persona.
@@ -141,6 +155,11 @@ Requirements:
 - If persona is impatient, sound slightly impatient when appropriate.
 - If persona is cooperative, answer directly and politely.
 - If persona is vague, keep details limited.
+- Avoid unnatural punctuation and artifacts:
+  - no square brackets like 【...】
+  - avoid Chinese or English parentheses unless they are truly part of a name the user would type
+  - rewrite "电路图（原理图）" as "原理图" or "电路图" according to context
+  - do not mention point_id, roadmap, source quote, case library, or fields
 - Do not over-explain.
 Return only JSON."""
 
@@ -168,4 +187,6 @@ Requirements:
 - Make the user's practical goal clear: they want the issue fixed, diagnosed, or given next steps.
 - Do not mention solution.
 - Do not mention case_id.
+- Do not copy bracketed case titles or document labels.
+- Avoid parentheses unless they are truly part of a product/file name.
 - Keep it concise."""

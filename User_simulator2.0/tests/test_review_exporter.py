@@ -1,11 +1,11 @@
-from main import build_blind_user_view
+from main import build_blind_user_view, build_runtime_roadmap
 from src.extraction.point_extractor import PointExtractor
 from src.extraction.point_verifier import PointVerifier
 from src.llm.mock_llm_client import MockLLMClient
 from src.review_exporter import ReviewExporter
 from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
-from src.schemas import Case, KnowledgeRoadmapArtifact
+from src.schemas import Case, CaseAnalysisDebugArtifact, KnowledgeRoadmapArtifact
 
 
 def test_review_exporter_writes_case_markdown_and_index(tmp_path):
@@ -17,6 +17,11 @@ def test_review_exporter_writes_case_markdown_and_index(tmp_path):
     relations = RelationBuilder(llm).build_relations(verification.verified_points, target.case_id)
     roadmap = RoadmapBuilder(llm).build_roadmap(target, verification.verified_points, relations)
     artifact = KnowledgeRoadmapArtifact(
+        case_id=target.case_id,
+        title=target.title,
+        roadmap=build_runtime_roadmap(roadmap),
+    )
+    debug_artifact = CaseAnalysisDebugArtifact(
         case_id=target.case_id,
         target_case=target,
         retrieval_queries=[],
@@ -34,6 +39,7 @@ def test_review_exporter_writes_case_markdown_and_index(tmp_path):
         {target.case_id: blind_view},
         [],
         [],
+        {target.case_id: debug_artifact},
     )
 
     paths = exporter.export_cases()

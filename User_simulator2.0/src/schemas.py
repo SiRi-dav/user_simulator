@@ -84,6 +84,34 @@ class Roadmap(BaseModel):
     forbidden_content: List[str]
 
 
+class RuntimePoint(BaseModel):
+    point_id: str
+    content: str
+    point_type: str
+    trigger: List[str] = Field(default_factory=list)
+    visibility: str
+
+
+class RuntimeRelation(BaseModel):
+    from_point_id: str
+    to_point_id: str
+    relation_type: str
+
+
+class RuntimeRoadmap(BaseModel):
+    target_case_id: str
+    surface_problem: str
+    opening_intent: str
+    user_facing_points: List[RuntimePoint]
+    diagnostic_points: List[RuntimePoint]
+    solution_points: List[RuntimePoint]
+    external_points: List[RuntimePoint]
+    relations: List[RuntimeRelation]
+    target_route: List[str]
+    external_routes: List[List[str]]
+    forbidden_content: List[str]
+
+
 class BlindUserCaseView(BaseModel):
     case_id: str
     surface_problem: str
@@ -93,6 +121,12 @@ class BlindUserCaseView(BaseModel):
 
 
 class KnowledgeRoadmapArtifact(BaseModel):
+    case_id: str
+    title: str = ""
+    roadmap: RuntimeRoadmap
+
+
+class CaseAnalysisDebugArtifact(BaseModel):
     case_id: str
     target_case: Case
     retrieval_queries: List[RetrievalQuery]
