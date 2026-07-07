@@ -67,16 +67,18 @@ Return JSON:
   "target_case_id": "...",
   "surface_problem": "...",
   "opening_intent": "...",
-  "user_facing_points": [...],
-  "diagnostic_points": [...],
-  "solution_points": [...],
-  "external_points": [...],
-  "relations": [...],
+  "user_facing_points": [complete Point objects from Verified points],
+  "diagnostic_points": [complete Point objects from Verified points],
+  "solution_points": [complete Point objects from Verified points],
+  "external_points": [complete Point objects from Verified points],
+  "relations": [complete Relation objects from Relations],
   "target_route": ["point_id", "..."],
   "external_routes": [["point_id", "..."]],
   "forbidden_content": [...]
 }}
 Requirements:
+- Reuse the complete Point objects from Verified points. Do not invent a shorter point schema.
+- Reuse the complete Relation objects from Relations. Do not invent a shorter relation schema.
 - Do not put solution content into surface_problem.
 - solution_points must be judge-only.
 - surface_problem should sound like a real user problem, not a case title.
