@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Case(BaseModel):
@@ -176,6 +176,13 @@ class UserBehaviorEvent(BaseModel):
     assistant_text: str
     released_information_type: Optional[str]
     behavior_reason: str
+
+    @field_validator("assistant_act", "user_behavior", "user_text", "assistant_text", "behavior_reason", mode="before")
+    @classmethod
+    def none_to_empty_string(cls, value: Any) -> Any:
+        if value is None:
+            return ""
+        return value
 
 
 class BehaviorTaxonomy(BaseModel):
