@@ -73,7 +73,7 @@
     - Blind User 生成自然用户回复
     - 更新 dialogue state
     - 写入 simulation log
-6. 如果 LLM 判断已解决，或达到 `--max_turns`，对话结束
+6. 如果 LLM 判断已解决、用户已接受可执行目标方案，或达到 `--max_turns`，对话结束
 
 注意：历史对话只负责总结用户行为结构，不参与 target case 的知识点抽取，也不生成 roadmap。
 
@@ -1082,12 +1082,12 @@ Assistant> 是登录不上还是打开就退出？
 User: 是打开以后就直接退出来了，还没到登录那一步。
 ```
 
-如果 assistant 给出正确方案，Knowledge Module 判断 solved 后会结束：
+如果 assistant 给出命中 solution point 的可执行方案，当前阶段允许用户接受方案并结束：
 
 ```text
 Assistant> 你可以先结束 Outlook 的残留进程再重新打开。
-User: 好的，那我按这个方法试一下。
-[STOP: solved]
+User: 好的，我按这个方法处理一下，谢谢。
+[STOP: accepted_actionable_solution]
 ```
 
 ## 18. 如何运行测试

@@ -22,3 +22,12 @@ def test_initial_user_prompt_requires_short_symptom_opening():
     assert "严重影响我的工作" in INITIAL_USER_USER
     assert "安排专家介入" in INITIAL_USER_USER
     assert "Do not over-explain background" in INITIAL_USER_USER
+
+
+def test_runtime_prompt_allows_stop_when_actionable_solution_is_accepted():
+    assert "accept_actionable_solution_and_stop" in KNOWLEDGE_DECISION_USER
+    assert "solution_accepted" in KNOWLEDGE_DECISION_USER
+    assert "accepted_actionable_solution" in KNOWLEDGE_DECISION_USER
+    assert "does not generate unsolicited follow-up" in KNOWLEDGE_DECISION_USER
+    assert "matches target solution_points" in KNOWLEDGE_DECISION_USER
+    assert "do not say you will come back later with results" in BLIND_USER_REPLY_USER

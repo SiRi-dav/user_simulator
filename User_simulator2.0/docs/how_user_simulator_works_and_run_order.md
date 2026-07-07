@@ -706,12 +706,13 @@ outputs/knowledge_roadmaps.jsonl
 
 Blind User 不直接读取完整 debug 材料。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
 
-待设计：
+当前结束策略：
 
 ```text
 当前 simulate 是严格一问一答，Blind User 不会在 assistant 停止回复后主动补充“我试完了，问题解决/没解决”。
-因此当 assistant 已经命中 solution point、但用户只说“我去试试”时，是否应该结束仍需要单独设计。
-暂时不要把“接受可执行方案”直接等同于 solved，也不要新增用户主动反馈机制。
+因此如果 assistant 给出命中 solution point 的可执行方案，Knowledge Module 可以让 Blind User 接受方案并结束。
+这类结束不是 solved_confirmed，而是 solution_accepted，stop_reason 为 accepted_actionable_solution。
+仍然不要新增用户主动反馈机制。
 ```
 
 如果你想人工检查 Blind User 可见内容，看：

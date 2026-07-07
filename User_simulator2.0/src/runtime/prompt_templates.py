@@ -64,6 +64,7 @@ Decision options:
 - ask_how_to_perform
 - attempt_or_redirect
 - confirm_and_stop
+- accept_actionable_solution_and_stop
 - not_solved_continue
 - impatient_stop
 Behavior rules:
@@ -81,12 +82,18 @@ Behavior rules:
     - no parenthetical document/category suffixes like （原理图） unless they are necessary user-visible text
     - no case_id, point_id, "source", "roadmap", "diagnostic point", or "solution point"
     - no raw copied titles; convert them to natural wording
+11. Ending rule for this simulator stage:
+    - The simulator does not generate unsolicited follow-up after the user attempts an action.
+    - If the assistant provides an actionable answer that matches target solution_points, the user may accept the solution and stop even before confirming the real-world outcome.
+    - Use decision="accept_actionable_solution_and_stop", matched_scope="target_solution", solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution".
+    - allowed_content should sound like a user accepting a clear next step, e.g. "好的，我按这个方法处理一下，谢谢。"
+    - Do not stop for generic advice, partial hints, wrong external solutions, or cases where the user still needs key missing operation details.
 Return JSON:
 {{
   "assistant_act": "...",
   "matched_scope": "case_internal | case_external | out_of_knowledge | target_solution | generic | unknown",
   "matched_point_id": "point_id or null",
-  "decision": "reveal_fact | clarify_or_deny | out_of_knowledge_reply | ask_how_to_perform | attempt_or_redirect | confirm_and_stop | not_solved_continue | impatient_stop",
+  "decision": "reveal_fact | clarify_or_deny | out_of_knowledge_reply | ask_how_to_perform | attempt_or_redirect | confirm_and_stop | accept_actionable_solution_and_stop | not_solved_continue | impatient_stop",
   "instruction": {{
     "user_intent": "...",
     "allowed_content": "...",
@@ -99,7 +106,7 @@ Return JSON:
     "rejected_external_point_ids_add": [],
     "action_request_count_delta": 0,
     "how_to_check_count_delta": 0,
-    "solution_status": "not_solved | partially_solved | solved",
+    "solution_status": "not_solved | partially_solved | solution_accepted | solved",
     "should_stop": false,
     "stop_reason": null
   }},
@@ -148,6 +155,7 @@ Requirements:
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
 - If the assistant asks the user to do something and the instruction allows it, ask how to do it or say you will try it according to the persona.
 - If the assistant gives a plausible concrete solution and the instruction says to confirm, sound willing to try it or accept it.
+- If instruction.should_stop is true because the solution was accepted, do not say you will come back later with results. Simply accept the actionable solution and close naturally.
 - If the assistant is off-track, correct or redirect while still sounding like a user trying to solve the problem.
 - Use employee persona and behavior policy only to shape wording and reaction style.
 - Do not add facts from employee persona or behavior policy.
