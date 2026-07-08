@@ -855,13 +855,13 @@ outputs/knowledge_roadmaps.jsonl
 
 找到对应 `case_id` 的预生成 Knowledge Module 路书，并从里面拿到紧凑 runtime roadmap。
 
-Blind User 不直接读取完整 debug 材料。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_content` 和开场用的 `surface_problem/opening_intent` 说话。
+Blind User 不直接读取完整 debug 材料。Blind User 在 runtime 里只通过 Knowledge Module 的 `allowed_facts`、`unknown_requested_facts` 和开场用的 `surface_problem/opening_intent` 说话。
 
 当前结束策略：
 
 ```text
 当前 simulate 是严格一问一答，Blind User 不会在 assistant 停止回复后主动补充“我试完了，问题解决/没解决”。
-因此如果 assistant 给出命中 solution point 的可执行方案，Knowledge Module 可以让 Blind User 接受方案并结束。
+因此如果 assistant 给出命中 solution point 的可执行方案，Knowledge Module 会标记 `solution_match=target`，Blind User 再选择接受方案并结束。
 这类结束不是 solved_confirmed，而是 solution_accepted，stop_reason 为 accepted_actionable_solution。
 仍然不要新增用户主动反馈机制。
 ```
@@ -899,8 +899,8 @@ Blind User 用 LLM 根据 surface_problem、opening_intent、employee persona �
 ```text
 assistant_text
 → BlindUser.parse_assistant_act
-→ KnowledgeModule.decide
-→ BlindUser.render_reply
+→ KnowledgeModule.assess
+→ BlindUser.choose_action_and_reply
 → update DialogueState
 → write simulation log
 ```
@@ -916,16 +916,44 @@ irrelevant
 unknown
 ```
 
-`KnowledgeModule.decide` 决定：
+`KnowledgeModule.assess` 只负责知识判断：
 
 ```text
 assistant 命中 case_internal / case_external / out_of_knowledge / target_solution？
-本轮允许用户说什么？
-是否停止？
-state 怎么更新？
+允许释放哪些用户可见事实？
+assistant 问到哪些用户不知道/不该知道的信息？
+是否命中 target solution？
+是否已经没有更多用户信息可补充？
+point 曝光状态怎么更新？
 ```
 
-`BlindUser.render_reply` 把 `allowed_content` 改写成自然用户话术。
+`KnowledgeModule.assess` 不选择用户动作，也不生成用户回复。
+
+`BlindUser.choose_action_and_reply` 才负责：
+
+```text
+根据 assistant act + knowledge assessment 选择用户动作
+生成自然用户回复
+决定是否接受可执行方案后结束
+决定是否因 assistant 无法继续有效推进而结束
+更新行为状态，例如 action_request_count / how_to_check_count / solution_status
+```
+
+当前可选用户动作包括：
+
+```text
+answer_question
+say_unknown
+ask_how_to_check
+ask_how_to_perform
+report_action_result
+correct_or_redirect
+accept_actionable_solution_and_stop
+stop_no_effective_solution
+continue
+```
+
+其中 `report_action_result` 用来处理“上一轮用户已经接受/尝试了一个操作方案”的情况。也就是说，用户说过“好的，我去试试看”之后，下一轮不会继续重复“我去试试”，而是优先反馈尝试结果，例如“试了还是一样”“没看到变化”“按这个操作后还是打不开”。
 
 每轮日志输出：
 
@@ -942,34 +970,35 @@ outputs/employee_personas.jsonl
 outputs/user_behavior_taxonomy.jsonl
 ```
 
-### 12.1 进入 Knowledge Module
+### 12.1 进入 Blind User
 
-Knowledge Module prompt 会看到 behavior taxonomy。
+behavior taxonomy 主要给 Blind User 使用，用来帮助它选择更像真实用户的动作和话术。
 
-它会参考真实用户行为分类决定反应类型，例如：
+例如：
 
 ```text
 assistant 要求用户操作时，低技术用户可能会先问怎么做
 assistant 问偏时，用户会纠正并拉回原问题
-assistant 给具体方案时，用户会接受并表示尝试
+assistant 给具体可执行方案时，用户可以接受并结束
+assistant 反复要求用户无法提供的信息时，用户可以说明不知道
 ```
 
-但它不能突破 roadmap。
+但它不能突破 Knowledge Module 给出的知识边界。
 
 也就是说：
 
 ```text
-taxonomy 决定怎么反应
-roadmap 决定能说什么事实
+Knowledge Module 决定能说什么事实
+Blind User 决定怎么反应、怎么表达、是否结束
 ```
 
-### 12.2 进入 Blind User
+### 12.2 进入 Blind User 生成回复
 
 Blind User prompt 会看到 employee persona。
 
-它负责把 Knowledge Module 给出的 `allowed_content` 改写成自然表达。
+它负责根据 Knowledge Module 给出的 `allowed_facts` / `unknown_requested_facts` / `solution_match` 选择用户动作，并生成自然表达。
 
-这里的 Blind User 不是机械复读 allowed_content。prompt 里已经明确写了：
+这里的 Blind User 不是机械复读 allowed facts。prompt 里已经明确写了：
 
 ```text
 用户是真的想解决这个影响工作的 IT 问题；
@@ -992,7 +1021,7 @@ Blind User prompt 会看到 employee persona。
 急躁型用户：就是一点开就退了，还没到登录，这个挺急的。
 ```
 
-但 Blind User 不能新增 allowed_content 之外的事实。
+但 Blind User 不能新增 Knowledge Module 允许范围之外的事实。
 
 ## 13. runtime 优先级
 

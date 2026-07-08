@@ -9,7 +9,7 @@ from src.llm.mock_llm_client import MockLLMClient
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.blind_user import BlindUser
 from src.runtime.simulator import Simulator
-from src.schemas import BlindUserCaseView, BlindUserInstruction, Case
+from src.schemas import BlindUserCaseView, Case, KnowledgeAssessment
 
 
 class PromptCaptureLLMClient(MockLLMClient):
@@ -18,8 +18,13 @@ class PromptCaptureLLMClient(MockLLMClient):
 
     def generate_json(self, system_prompt, user_prompt, schema_name=None, temperature=0.2):
         self.last_user_prompt = user_prompt
-        if schema_name == "BlindUserReply":
-            return {"reply": "好的。"}
+        if schema_name == "BlindUserAction":
+            return {
+                "user_action": "continue",
+                "reply": "好的。",
+                "state_update": {"solution_status": "not_solved", "should_stop": False, "stop_reason": None},
+                "reason": "capture prompt",
+            }
         return super().generate_json(system_prompt, user_prompt, schema_name, temperature)
 
 
@@ -46,9 +51,30 @@ def test_runtime_step_solved_sets_should_stop():
     )
     simulator.start()
     result = simulator.step("你可以先结束 Outlook 的残留进程再重新打开。")
-    assert result["state"]["solution_status"] == "solved"
+    assert result["state"]["solution_status"] == "solution_accepted"
     assert result["state"]["should_stop"] is True
+    assert result["user_action"]["user_action"] == "accept_actionable_solution_and_stop"
     assert result["user_reply"]
+
+
+def test_simulator_applies_pending_action_result_state_update():
+    llm = MockLLMClient()
+    target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
+    roadmap = RoadmapBuilder(llm).build_roadmap(target, [], [])
+    simulator = Simulator(
+        build_blind_user_runtime_view(build_blind_user_view(roadmap)),
+        build_runtime_roadmap(roadmap),
+        {"name": "low_tech"},
+        llm,
+    )
+
+    simulator._apply_state_update({"pending_action_result": True, "last_action_summary": "重启应用"})
+    assert simulator.state.pending_action_result is True
+    assert simulator.state.last_action_summary == "重启应用"
+
+    simulator._apply_state_update({"pending_action_result": False, "last_action_summary": None})
+    assert simulator.state.pending_action_result is False
+    assert simulator.state.last_action_summary is None
 
 
 def test_simulator_initial_reply_uses_blind_view_not_full_roadmap_surface_problem():
@@ -100,16 +126,23 @@ def test_runtime_loads_manual_seed_behavior_assets_when_outputs_missing(tmp_path
     }
 
 
-def test_blind_user_reply_prompt_hides_specific_forbidden_solution_text():
+def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():
     llm = PromptCaptureLLMClient()
-    instruction = BlindUserInstruction(
-        user_intent="确认方案",
-        allowed_content="好的，我试一下。",
+    assessment = KnowledgeAssessment(
+        assistant_act="solution_output",
+        matched_scope="target_solution",
+        matched_point_ids=["P3"],
+        allowed_facts=["assistant 已给出可尝试方法"],
+        unknown_requested_facts=[],
         forbidden_content=["结束 Outlook 残留进程后重新打开", "CASE_001"],
-        tone="low_tech",
+        solution_match="target",
+        progress_status="new_progress",
+        no_more_user_info=False,
+        state_update={},
+        reason="test",
     )
 
-    BlindUser(llm).render_reply(instruction, {"name": "low_tech"}, None, [], "Outlook 打不开", [])
+    BlindUser(llm).choose_action_and_reply(assessment, {"name": "low_tech"}, None, [], "Outlook 打不开", [])
 
     assert "结束 Outlook 残留进程后重新打开" not in llm.last_user_prompt
     assert "CASE_001" not in llm.last_user_prompt

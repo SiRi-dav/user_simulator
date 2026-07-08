@@ -124,34 +124,40 @@ class MockLLMClient(LLMClient):
             else:
                 act = "action_request"
             return {"assistant_act": act, "request_summary": "assistant latest reply", "confidence": 0.9, "reason": "mock classification"}
-        if schema_name == "KnowledgeDecision":
+        if schema_name == "KnowledgeAssessment":
             solved = "结束 Outlook" in user_prompt or "残留进程" in user_prompt
             return {
                 "assistant_act": "solution_output" if solved else "clarification_question",
                 "matched_scope": "target_solution" if solved else "case_internal",
-                "matched_point_id": "P3" if solved else "P2",
-                "decision": "confirm_and_stop" if solved else "reveal_fact",
-                "instruction": {
-                    "user_intent": "确认方案" if solved else "补充退出时机",
-                    "allowed_content": "好的，那我按这个方法试一下。" if solved else "是打开以后就直接退出来了，还没到登录那一步。",
-                    "forbidden_content": ["CASE_001"],
-                    "tone": "low_tech",
-                    "should_stop": solved,
-                },
+                "matched_point_ids": ["P3"] if solved else ["P2"],
+                "allowed_facts": ["assistant 已给出结束 Outlook 残留进程后重新打开的方法"] if solved else ["还没进入登录页面就退出"],
+                "unknown_requested_facts": [],
+                "forbidden_content": ["CASE_001"],
+                "solution_match": "target" if solved else "none",
+                "progress_status": "new_progress",
+                "no_more_user_info": False,
                 "state_update": {
                     "exposed_point_ids_add": [] if solved else ["P2"],
                     "rejected_external_point_ids_add": [],
+                },
+                "reason": "mock assessment",
+            }
+        if schema_name == "BlindUserAction":
+            solved = '"solution_match": "target"' in user_prompt
+            return {
+                "user_action": "accept_actionable_solution_and_stop" if solved else "answer_question",
+                "reply": "好的，那我按这个方法试一下。" if solved else "是打开以后就直接退出来了，还没到登录那一步。",
+                "state_update": {
                     "action_request_count_delta": 0,
                     "how_to_check_count_delta": 0,
-                    "solution_status": "solved" if solved else "not_solved",
+                    "pending_action_result": False,
+                    "last_action_summary": None,
+                    "solution_status": "solution_accepted" if solved else "not_solved",
                     "should_stop": solved,
-                    "stop_reason": "solved" if solved else None,
+                    "stop_reason": "accepted_actionable_solution" if solved else None,
                 },
-                "reason": "mock decision",
+                "reason": "mock action",
             }
-        if schema_name == "BlindUserReply":
-            solved = "好的，那我按这个方法试一下" in user_prompt
-            return {"reply": "好的，那我按这个方法试一下。" if solved else "是打开以后就直接退出来了，还没到登录那一步。"}
         if schema_name == "DialogueBehaviorSummary":
             return {
                 "dialogue_id": "DIALOG_001",

@@ -274,7 +274,7 @@ Blind User 不直接读取 runtime roadmap。roadmap 主要给 Knowledge Module 
 - `should_stop`
 - `stop_reason`
 
-注意：状态更新来自 LLM 返回的 `KnowledgeDecision.state_update`，不是程序用关键词规则判断出来的。
+注意：状态更新来自 LLM 返回的结构化结果，不是程序用关键词规则判断出来的。`KnowledgeAssessment.state_update` 主要更新 point 曝光状态，`BlindUserAction.state_update` 主要更新用户行为状态和停止状态。
 
 ### `AssistantAct`
 
@@ -289,17 +289,32 @@ Blind User 对 assistant 回复类型的 LLM 分类结果。
 - `irrelevant`
 - `unknown`
 
-### `KnowledgeDecision`
+### `KnowledgeAssessment`
 
 Knowledge Module 的核心输出。
 
-它决定：
+它判断：
 
 - assistant 命中了什么 scope
 - 是否匹配某个 point
-- 本轮决策是什么
-- Blind User 允许说什么
-- dialogue state 如何更新
+- 哪些用户可见事实可以释放
+- assistant 问到哪些用户不知道/不该知道的信息
+- 是否命中 target solution
+- 是否已经没有更多用户信息可补充
+
+Knowledge Module 不选择用户动作，也不生成用户回复。
+
+### `BlindUserAction`
+
+Blind User 的动作和回复输出。
+
+它决定：
+
+- 本轮用户动作是什么
+- 用户自然语言回复是什么
+- 是否接受可执行方案后结束
+- 是否因 assistant 无法继续有效推进而结束
+- dialogue state 中的行为状态如何更新
 
 ### `SimulationTurnLog`
 
@@ -310,7 +325,8 @@ Knowledge Module 的核心输出。
 - turn
 - assistant_text
 - assistant_act
-- knowledge_decision
+- knowledge_assessment
+- user_action
 - user_reply
 - state
 
@@ -558,8 +574,8 @@ step(assistant_text: str) -> Dict[str, Any]
 
 1. 记录 assistant 最新回复
 2. `BlindUser.parse_assistant_act()` 用 LLM 分类 assistant act
-3. `KnowledgeModule.decide()` 用 LLM 做知识匹配和行为决策
-4. `BlindUser.render_reply()` 用 LLM 生成自然用户回复
+3. `KnowledgeModule.assess()` 用 LLM 做知识匹配、事实边界和进展状态判断
+4. `BlindUser.choose_action_and_reply()` 用 LLM 选择用户动作并生成自然用户回复
 5. 应用 LLM 返回的 state update
 6. 写 turn log
 
@@ -571,23 +587,23 @@ step(assistant_text: str) -> Dict[str, Any]
 
 - `initial_reply()`: 用 LLM 生成初始用户开场
 - `parse_assistant_act()`: 用 LLM 判断 assistant 回复类型
-- `render_reply()`: 根据 Knowledge Module instruction 生成自然语言回复
+- `choose_action_and_reply()`: 根据 Knowledge Module assessment 选择用户动作并生成自然语言回复
 
 Blind User prompt 会明确要求模拟用户带着真实解决问题的动机：
 
 - 用户不是闲聊，而是工作被 IT 问题影响，想尽快恢复；
 - 开场要体现“我希望你帮我解决/诊断/给下一步”；
 - 被追问时，如果 roadmap 允许，就补充有助于排障的信息；
-- 被要求操作时，如果 instruction 允许，就追问怎么做或表示会尝试；
+- 被要求操作时，如果 Knowledge Module 判断允许，就追问怎么做或表示会尝试；
 - assistant 问偏时，用户会把对话拉回自己的问题；
-- 但所有表达都不能突破 `allowed_content`。具体 forbidden solution 文本不会直接传给 Blind User，只会以抽象禁区标签提示。
+- 但所有表达都不能突破 Knowledge Module 给出的 `allowed_facts` / `unknown_requested_facts` 边界。
 
 Blind User 的限制：
 
 - 不直接看完整 solution
 - 不直接判断 solution 是否正确
-- 不决定释放哪个 fact
-- 只使用 Knowledge Module 给的 `allowed_content`
+- 不直接看 Knowledge Module 的完整 roadmap
+- 只使用 Knowledge Module 给出的用户可见事实和未知事实边界
 
 ### `knowledge_module.py`
 
@@ -595,7 +611,7 @@ Blind User 的限制：
 
 职责：
 
-- 读取 roadmap、state、persona、dialogue history
+- 读取 roadmap、state、dialogue history
 - 用 LLM 判断 assistant 回复命中：
   - `case_internal`
   - `case_external`
@@ -603,14 +619,14 @@ Blind User 的限制：
   - `target_solution`
   - `generic`
   - `unknown`
-- 用 LLM 决定：
-  - reveal fact
-  - clarify or deny
-  - ask how to perform
-  - confirm and stop
-  - continue
-  - impatient stop
-- 返回 `KnowledgeDecision`
+- 用 LLM 评估：
+  - 哪些事实可以给 Blind User 使用
+  - 哪些问题用户不知道或不该回答
+  - 是否命中 target solution
+  - assistant 是否已经无法继续有效推进
+- 返回 `KnowledgeAssessment`
+
+Knowledge Module 不负责选择用户动作；动作选择由 Blind User 完成。
 
 ### `dialogue_state.py`
 
@@ -621,8 +637,8 @@ Blind User 的限制：
 放 runtime 相关 prompt：
 
 - assistant act parsing
-- knowledge decision
-- blind user reply rendering
+- knowledge assessment
+- blind user action and reply generation
 - initial user opening
 
 ## 11. 工具层：`src/utils/`
@@ -996,7 +1012,7 @@ interaction_realism_score
 
 runtime 中不同信息源的优先级如下：
 
-1. Roadmap / Knowledge Module factual constraint 最高，决定 allowed_content，防止泄露 solution。
+1. Roadmap / Knowledge Module factual constraint 最高，决定 `allowed_facts` 和 `unknown_requested_facts`，防止泄露 solution。
 2. Dialogue State 第二，决定是否已经说过、是否重复追问、是否超过 patience。
 3. Behavior Taxonomy 第三，决定面对追问、动作要求、方案输出时采用哪类行为。
 4. Employee Persona 第四，决定表达风格和自然语言难度。

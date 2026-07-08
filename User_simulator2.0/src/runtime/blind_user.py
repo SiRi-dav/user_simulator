@@ -6,12 +6,12 @@ from src.llm.llm_client import LLMClient
 from src.runtime.prompt_templates import (
     ASSISTANT_ACT_SYSTEM,
     ASSISTANT_ACT_USER,
-    BLIND_USER_REPLY_SYSTEM,
-    BLIND_USER_REPLY_USER,
+    BLIND_USER_ACTION_SYSTEM,
+    BLIND_USER_ACTION_USER,
     INITIAL_USER_SYSTEM,
     INITIAL_USER_USER,
 )
-from src.schemas import AssistantAct, BlindUserInstruction, model_to_dict
+from src.schemas import AssistantAct, BlindUserAction, DialogueState, KnowledgeAssessment, model_to_dict
 from src.utils.json_utils import dumps_json
 
 
@@ -43,29 +43,35 @@ class BlindUser:
         payload = self.llm_client.generate_json(ASSISTANT_ACT_SYSTEM, user_prompt, schema_name="AssistantAct")
         return AssistantAct(**payload)
 
-    def render_reply(
+    def choose_action_and_reply(
         self,
-        instruction: BlindUserInstruction,
+        assessment: KnowledgeAssessment,
         persona: Dict[str, Any],
         employee_persona: Dict[str, Any] | None,
         behavior_policy: List[Dict[str, Any]],
         surface_problem: str,
         dialogue_history: List[Dict[str, str]],
-    ) -> str:
-        instruction_json = model_to_dict(instruction)
-        instruction_json["forbidden_content"] = sanitize_forbidden_content_for_blind_user(
-            instruction_json.get("forbidden_content", [])
+        state: DialogueState | None = None,
+    ) -> BlindUserAction:
+        assessment_json = model_to_dict(assessment)
+        assessment_json["forbidden_content"] = sanitize_forbidden_content_for_blind_user(
+            assessment_json.get("forbidden_content", [])
         )
-        user_prompt = BLIND_USER_REPLY_USER.format(
+        user_prompt = BLIND_USER_ACTION_USER.format(
             surface_problem=surface_problem,
             persona_json=dumps_json(persona),
             employee_persona_json=dumps_json(employee_persona or {}),
             behavior_policy_json=dumps_json(model_to_dict(behavior_policy)),
-            instruction_json=dumps_json(instruction_json),
+            knowledge_assessment_json=dumps_json(assessment_json),
+            state_json=dumps_json(model_to_dict(state) if state else {}),
             dialogue_history_json=dumps_json(dialogue_history),
         )
-        payload = self.llm_client.generate_json(BLIND_USER_REPLY_SYSTEM, user_prompt, schema_name="BlindUserReply")
-        return str(payload["reply"])
+        payload = self.llm_client.generate_json(
+            BLIND_USER_ACTION_SYSTEM,
+            user_prompt,
+            schema_name="BlindUserAction",
+        )
+        return BlindUserAction(**payload)
 
 
 def sanitize_forbidden_content_for_blind_user(forbidden_content: Any) -> List[str]:

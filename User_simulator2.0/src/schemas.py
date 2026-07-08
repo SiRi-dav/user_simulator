@@ -151,6 +151,8 @@ class DialogueState(BaseModel):
     action_request_count: int = 0
     how_to_check_count: int = 0
     max_how_to_check: int = 1
+    pending_action_result: bool = False
+    last_action_summary: Optional[str] = None
     solution_status: str = "not_solved"
     should_stop: bool = False
     stop_reason: Optional[str] = None
@@ -171,6 +173,27 @@ class BlindUserInstruction(BaseModel):
     should_stop: bool = False
 
 
+class KnowledgeAssessment(BaseModel):
+    assistant_act: str
+    matched_scope: str
+    matched_point_ids: List[str] = Field(default_factory=list)
+    allowed_facts: List[str] = Field(default_factory=list)
+    unknown_requested_facts: List[str] = Field(default_factory=list)
+    forbidden_content: List[str] = Field(default_factory=list)
+    solution_match: str = "none"
+    progress_status: str = "new_progress"
+    no_more_user_info: bool = False
+    state_update: Dict[str, Any] = Field(default_factory=dict)
+    reason: str
+
+
+class BlindUserAction(BaseModel):
+    user_action: str
+    reply: str
+    state_update: Dict[str, Any] = Field(default_factory=dict)
+    reason: str
+
+
 class KnowledgeDecision(BaseModel):
     assistant_act: str
     matched_scope: str
@@ -185,7 +208,8 @@ class SimulationTurnLog(BaseModel):
     turn: int
     assistant_text: str
     assistant_act: AssistantAct
-    knowledge_decision: KnowledgeDecision
+    knowledge_assessment: KnowledgeAssessment
+    user_action: BlindUserAction
     user_reply: str
     state: DialogueState
 

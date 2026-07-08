@@ -46,31 +46,33 @@ class Simulator:
     def step(self, assistant_text: str) -> Dict[str, Any]:
         self.dialogue_history.append({"role": "assistant", "content": assistant_text})
         assistant_act = self.blind_user.parse_assistant_act(assistant_text, self.dialogue_history)
-        decision = self.knowledge_module.decide(
+        assessment = self.knowledge_module.assess(
             assistant_text,
             assistant_act,
             self.roadmap,
             self.state,
-            self.persona,
-            self.behavior_taxonomy,
             self.dialogue_history,
         )
-        user_reply = self.blind_user.render_reply(
-            decision.instruction,
+        action = self.blind_user.choose_action_and_reply(
+            assessment,
             self.persona,
             self.employee_persona,
             self.behavior_taxonomy,
             self.blind_view.surface_problem,
             self.dialogue_history,
+            self.state,
         )
-        self._apply_state_update(decision.state_update)
+        self._apply_state_update(assessment.state_update)
+        self._apply_state_update(action.state_update)
         self.state.turn_count += 1
+        user_reply = action.reply
         self.dialogue_history.append({"role": "user", "content": user_reply})
         turn_log = SimulationTurnLog(
             turn=self.state.turn_count,
             assistant_text=assistant_text,
             assistant_act=assistant_act,
-            knowledge_decision=decision,
+            knowledge_assessment=assessment,
+            user_action=action,
             user_reply=user_reply,
             state=self.state,
         )
@@ -92,6 +94,11 @@ class Simulator:
                 self.state.rejected_external_point_ids.append(str(point_id))
         self.state.action_request_count += int(update.get("action_request_count_delta") or 0)
         self.state.how_to_check_count += int(update.get("how_to_check_count_delta") or 0)
+        if "pending_action_result" in update:
+            self.state.pending_action_result = bool(update.get("pending_action_result"))
+        if "last_action_summary" in update:
+            value = update.get("last_action_summary")
+            self.state.last_action_summary = str(value) if value else None
         if update.get("solution_status"):
             self.state.solution_status = str(update["solution_status"])
         if update.get("should_stop") is not None:
