@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from src.evaluator_metrics import information_rhythm_stats, opening_realism_stats
 from src.llm.llm_client import LLMClient
 from src.schemas import KnowledgeRoadmapArtifact, model_to_dict
 from src.transcript_exporter import build_transcript, read_simulation_logs
@@ -26,20 +27,41 @@ SIMULATOR_JUDGE_USER = """Transcript:
 Runtime roadmap:
 {roadmap_json}
 
-Evaluate the simulated user on four dimensions, each from 0.0 to 1.0:
-1. answer_alignment_score: whether user replies answer the assistant's latest question.
-2. information_progress_score: whether user replies move the dialogue forward with useful information, confirmation, denial, action attempt, or result feedback.
-3. user_knowledge_boundary_score: whether the user stays within what a real blind user should know and does not reveal solution/internal/external-case facts prematurely.
-4. interaction_realism_score: whether the user sounds like a realistic employee user, concise and non-template-like.
+请从以下三个核心维度评估模拟用户的真实度和合理性（0.0 到 1.0，越高越好）：
 
-Return JSON:
+1. 行为真实度 (Behavioral Realism)
+   重点关注：**初始提问像不像真实用户**
+   - 初始提问的自然度：是否像真实员工的表达方式（不过于正式、不过于简略）
+   - 初始提问与目标案例表面问题的相似度：是否准确描述了问题现象
+   - 整体交流风格：是否像真实用户的语言风格和节奏
+   - 澄清/困惑/错误反应：遇到问题时是否像真实用户一样反应
+
+2. 目标对齐 (Goal Alignment)
+   重点关注：**后续对话的信息输出是否忠实于初始目标**
+   - 目标坚持度：是否始终围绕初始问题，没有被带偏
+   - 信息输出时机：是否在被追问时才透露诊断信息，而不是主动倾倒
+   - 信息输出准确性：是否与roadmap中的事实一致，没有幻觉或偏离
+   - 能否走到解决：是否能在合理轮次内接受有效解决方案
+
+3. 过度合作 (Overly Cooperative)
+   重点关注：**整体是否过于配合，缺少真实用户的阻力**
+   - 配合度对比：是否比真实用户更容易接受方案
+   - 阻力表现：是否缺少真实用户的困惑、犹豫、追问、挫败感
+   - 质疑和拒绝：是否缺乏合理的质疑和拒绝行为
+   - 逼真度：是否让待测系统过于轻松过关
+
+返回 JSON：
 {{
-  "answer_alignment_score": 0.0,
-  "information_progress_score": 0.0,
-  "user_knowledge_boundary_score": 0.0,
-  "interaction_realism_score": 0.0,
+  "behavioral_realism_score": 0.0,
+  "goal_alignment_score": 0.0,
+  "anti_overcooperation_score": 0.0,
   "overall_score": 0.0,
-  "reasons": ["..."]
+  "analysis": {{
+    "behavioral_realism_analysis": "...",
+    "goal_alignment_analysis": "...",
+    "overcooperation_analysis": "..."
+  }},
+  "reasons": ["...", "..."]
 }}"""
 
 
@@ -119,12 +141,21 @@ def calculate_rule_metrics(
     progress_stats = information_progress_stats(user_texts)
     boundary_stats = knowledge_boundary_stats(user_texts, artifact)
     realism_stats = interaction_realism_stats(user_texts)
+
+    # NEW: Opening realism evaluation
+    opening_stats = opening_realism_stats(transcript, artifact)
+
+    # NEW: Information rhythm evaluation
+    rhythm_stats = information_rhythm_stats(transcript, artifact)
+
+    # Core scores
     scores = {
         "answer_alignment_score": answer_stats["answer_alignment_rate"],
         "information_progress_score": progress_stats["information_progress_rate"],
         "user_knowledge_boundary_score": 1.0 - boundary_stats["boundary_violation_rate"],
         "interaction_realism_score": realism_stats["interaction_realism_score"],
     }
+
     return {
         "case_id": case_id,
         "turn_count": transcript.get("turn_count", 0),
@@ -136,6 +167,9 @@ def calculate_rule_metrics(
         **boundary_stats,
         **realism_stats,
         **scores,
+        # NEW: Enhanced metrics
+        **opening_stats,
+        **rhythm_stats,
         "overall_rule_score": round(average(list(scores.values())), 3),
         "stop_reason": transcript.get("stop_reason", ""),
         "solution_status": transcript.get("solution_status", ""),
@@ -218,23 +252,25 @@ def interaction_realism_stats(user_texts: list[str]) -> Dict[str, Any]:
 
 
 def normalize_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    scores = {
-        "answer_alignment_score": clamp_float(payload.get("answer_alignment_score")),
-        "information_progress_score": clamp_float(payload.get("information_progress_score")),
-        "user_knowledge_boundary_score": clamp_float(payload.get("user_knowledge_boundary_score")),
-        "interaction_realism_score": clamp_float(payload.get("interaction_realism_score")),
+    # NEW: Simplified judge payload focusing on three core dimensions
+    analysis = payload.get("analysis") or {}
+    return {
+        "behavioral_realism_score": clamp_float(payload.get("behavioral_realism_score")),
+        "goal_alignment_score": clamp_float(payload.get("goal_alignment_score")),
+        "anti_overcooperation_score": clamp_float(payload.get("anti_overcooperation_score")),
+        "overall_score": clamp_float(payload.get("overall_score")),
+        "behavioral_realism_analysis": str(analysis.get("behavioral_realism_analysis", "")),
+        "goal_alignment_analysis": str(analysis.get("goal_alignment_analysis", "")),
+        "overcooperation_analysis": str(analysis.get("overcooperation_analysis", "")),
+        "reasons": [str(item) for item in payload.get("reasons", [])] if isinstance(payload.get("reasons"), list) else [],
     }
-    overall = payload.get("overall_score")
-    scores["overall_score"] = clamp_float(overall if overall is not None else average(list(scores.values())))
-    reasons = payload.get("reasons")
-    scores["reasons"] = [str(item) for item in reasons] if isinstance(reasons, list) else []
-    return scores
 
 
 def render_metrics_summary(records: list[Dict[str, Any]]) -> str:
     lines = [
         "# User Simulator Metrics Summary",
         "",
+        "## Core Metrics",
         "| case_id | turns | answer_align | info_progress | boundary | realism | overall_rule | judge_overall |",
         "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
@@ -250,6 +286,26 @@ def render_metrics_summary(records: list[Dict[str, Any]]) -> str:
                 realism=float(record.get("interaction_realism_score", 0.0)),
                 overall=float(record.get("overall_rule_score", 0.0)),
                 judge_overall=f"{float(judge.get('overall_score')):.2f}" if "overall_score" in judge else "",
+            )
+        )
+    lines.extend([
+        "",
+        "## Enhanced Metrics",
+        "| case_id | opening_realism | surface_sim | opening_natural | leak_risk | info_rhythm | timing | sequence | accuracy |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ])
+    for record in records:
+        lines.append(
+            "| {case_id} | {open_real:.2f} | {surf_sim:.2f} | {nat:.2f} | {leak:.2f} | {rhythm:.2f} | {timing:.2f} | {seq:.2f} | {acc:.2f} |".format(
+                case_id=record["case_id"],
+                open_real=float(record.get("opening_realism_score", 0.0)),
+                surf_sim=float(record.get("surface_semantic_similarity", 0.0)),
+                nat=float(record.get("opening_naturalness_score", 0.0)),
+                leak=float(record.get("opening_info_leak_risk", 0.0)),
+                rhythm=float(record.get("information_rhythm_score", 0.0)),
+                timing=float(record.get("info_release_timing_score", 0.0)),
+                seq=float(record.get("info_sequence_rationality", 0.0)),
+                acc=float(record.get("info_accuracy_score", 0.0)),
             )
         )
     return "\n".join(lines) + "\n"

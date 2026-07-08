@@ -117,6 +117,6 @@ def test_evaluate_case_can_use_llm_judge(tmp_path: Path):
     result = evaluator.evaluate_case("KT001", real, simulated, use_judge=True)
 
     assert result["llm_judge"]["behavioral_realism_score"] == 0.82
-    assert result["behavioral_realism"]["llm_behavioral_realism_score"] == 0.82
-    assert result["goal_alignment"]["llm_goal_alignment_score"] == 0.9
-    assert result["overly_cooperative"]["llm_anti_overcooperation_score"] == 0.7
+    assert result["behavioral_realism"]["llm_judge_score"] == 0.82
+    assert result["goal_alignment"]["llm_judge_score"] == 0.9
+    assert result["overly_cooperative"]["llm_judge_score"] == 0.7

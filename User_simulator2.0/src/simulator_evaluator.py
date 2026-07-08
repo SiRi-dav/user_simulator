@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from src.behavior_mining.dialogue_loader import load_dialogues
+from src.evaluator_metrics import information_rhythm_stats, opening_realism_stats
 from src.llm.llm_client import LLMClient
 from src.metrics_exporter import knowledge_boundary_stats
 from src.review_exporter import safe_filename
@@ -16,7 +17,7 @@ from src.utils.json_utils import dumps_json
 from src.utils.jsonl import write_jsonl
 
 
-USER_QUESTION_MARKERS = ("?", "？", "吗", "怎么", "如何", "为啥", "为什么", "能不能", "可以不")
+USER_QUESTION_MARKERS = ("?", "?", "吗", "怎么", "如何", "为啥", "为什么", "能不能", "可以不")
 ACCEPT_MARKERS = ("好的", "好", "可以", "行", "嗯", "谢谢", "感谢", "已解决", "解决了", "没问题")
 REJECT_MARKERS = ("不行", "不可以", "没有用", "还是不行", "没解决", "不对", "不是", "不需要")
 CONFUSION_MARKERS = ("不懂", "不会", "不知道", "没看懂", "看不明白", "不太清楚", "找不到", "没找到")
@@ -27,8 +28,8 @@ OFF_TOPIC_MARKERS = ("天气", "吃饭", "旅游", "电影", "小说", "股票",
 
 
 SIMULATOR_EVAL_JUDGE_SYSTEM = """你是企业 IT 客服用户模拟器的评测专家。
-你会对比真实用户对话和模拟用户对话，只评估“模拟用户”是否像真实用户、是否坚持目标、是否过度合作。
-请只输出合法 JSON，不要输出解释性正文。"""
+你会对比真实用户对话和模拟用户对话,只评估"模拟用户"的质量。
+请只输出合法 JSON,不要输出解释性正文。"""
 
 
 SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
@@ -46,26 +47,59 @@ SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
 规则统计摘要:
 {feature_summary_json}
 
-请评估这些规则指标难以可靠判断的语义维度：
-1. behavioral_realism_score: 模拟用户在交流风格、信息透露节奏、澄清/困惑/错误反应上是否像真实用户。
-2. user_sim_index: 细分为 communication_style、information_pattern、clarification_behavior、error_reaction，并给 score。
-3. goal_alignment_score: 模拟用户是否始终围绕目标 case，是否没有偏离/偷看答案/提前泄露解决方案。
-4. anti_overcooperation_score: 模拟用户是否避免过度配合；真实用户会有困惑、犹豫、追问、拒绝或失败反馈时，模拟用户是否也合理表现。
+请从以下三个核心维度评估模拟用户的真实度和合理性（0.0 到 1.0,越高越好）:
 
-分数均为 0.0 到 1.0，越高越好。返回 JSON：
+1. 行为真实度 (Behavioral Realism)
+   重点关注:**初始提问像不像真实用户**
+   - 初始提问的自然度:是否像真实员工的表达方式（不过于正式、不过于简略）
+   - 初始提问与目标案例表面问题的相似度:是否准确描述了问题现象
+   - 整体交流风格:是否像真实用户的语言风格和节奏
+   - 澄清/困惑/错误反应:遇到问题时是否像真实用户一样反应
+
+   评分标准:
+   - 0.8-1.0:非常真实,初始提问自然且准确,整体交流风格与真实用户高度一致
+   - 0.5-0.7:基本真实,初始提问合理但有一些不自然之处
+   - 0.2-0.4:不够真实,初始提问过于正式或过于简略,交流风格有明显差异
+   - 0.0-0.1:完全不真实,初始提问像机器生成或明显违背真实用户行为
+
+2. 目标对齐 (Goal Alignment)
+   重点关注:**后续对话的信息输出是否忠实于初始目标**
+   - 目标坚持度:是否始终围绕初始问题,没有被带偏
+   - 信息输出时机:是否在被追问时才透露诊断信息,而不是主动倾倒
+   - 信息输出准确性:是否与roadmap中的事实一致,没有幻觉或偏离
+   - 能否走到解决:是否能在合理轮次内接受有效解决方案
+
+   评分标准:
+   - 0.8-1.0:高度对齐,始终围绕目标,信息输出时机准确,能够走到解决
+   - 0.5-0.7:基本对齐,大部分时间围绕目标,信息输出基本合理
+   - 0.2-0.4:对齐度低,容易跑题或信息输出节奏混乱
+   - 0.0-0.1:完全不对齐,严重偏离目标或信息输出完全不合理
+
+3. 过度合作 (Overly Cooperative)
+   重点关注:**整体是否过于配合,缺少真实用户的阻力**
+   - 配合度对比:是否比真实用户更容易接受方案
+   - 阻力表现:是否缺少真实用户的困惑、犹豫、追问、挫败感
+   - 质疑和拒绝:是否缺乏合理的质疑和拒绝行为
+   - 逼真度:是否让待测系统过于轻松过关
+
+   评分标准:
+   - 0.8-1.0:逼真,表现出合理的困惑、犹豫、追问,不会过于配合
+   - 0.5-0.7:基本逼真,有一些真实用户的阻力表现
+   - 0.2-0.4:过度配合,缺少真实的困惑和质疑
+   - 0.0-0.1:严重过度配合,完全不像真实用户的行为
+
+返回 JSON:
 {{
   "behavioral_realism_score": 0.0,
-  "user_sim_index": {{
-    "score": 0.0,
-    "communication_style": 0.0,
-    "information_pattern": 0.0,
-    "clarification_behavior": 0.0,
-    "error_reaction": 0.0
-  }},
   "goal_alignment_score": 0.0,
   "anti_overcooperation_score": 0.0,
-  "overcooperation_risk": "low|medium|high",
-  "reasons": ["..."]
+  "overall_score": 0.0,
+  "analysis": {{
+    "behavioral_realism_analysis": "...",
+    "goal_alignment_analysis": "...",
+    "overcooperation_analysis": "..."
+  }},
+  "reasons": ["...", "..."]
 }}"""
 
 
@@ -114,6 +148,10 @@ class SimulatorEvaluator:
         behavior = behavioral_realism(real_features, sim_features)
         goal = goal_alignment(case_id, simulated_transcripts, sim_features, artifact)
         cooperation = overly_cooperative(real_features, sim_features)
+
+        # NEW: Enhanced evaluation metrics
+        enhanced = enhanced_evaluation(case_id, simulated_transcripts, artifact)
+
         llm_judge: Dict[str, Any] | None = None
         if use_judge:
             if self.llm_client is None:
@@ -129,11 +167,13 @@ class SimulatorEvaluator:
                     "rule_behavioral_realism": behavior,
                     "rule_goal_alignment": goal,
                     "rule_overly_cooperative": cooperation,
+                    "enhanced_metrics": enhanced,
                 },
             )
             behavior = apply_behavior_judge(behavior, llm_judge)
             goal = apply_goal_judge(goal, llm_judge)
             cooperation = apply_cooperation_judge(cooperation, llm_judge)
+
         overall = round(
             weighted_average(
                 {
@@ -153,6 +193,7 @@ class SimulatorEvaluator:
             "behavioral_realism": behavior,
             "goal_alignment": goal,
             "overly_cooperative": cooperation,
+            "enhanced_evaluation": enhanced,  # NEW: Enhanced metrics
             "llm_judge": llm_judge,
             "real_feature_summary": summarize_features(real_features),
             "simulated_feature_summary": summarize_features(sim_features),
@@ -217,7 +258,7 @@ def collect_real_case_ids(dialogues: list[HistoricalDialogue]) -> list[str]:
 def expand_case_ids(value: str | None) -> set[str]:
     if not value:
         return set()
-    normalized = str(value).replace(",", "\n").replace("，", "\n")
+    normalized = str(value).replace(",", "\n").replace(",", "\n")
     return {item.strip() for item in normalized.splitlines() if item.strip()}
 
 
@@ -411,43 +452,46 @@ def overly_cooperative(real_features: list[Dict[str, Any]], sim_features: list[D
 
 
 def apply_behavior_judge(rule_behavior: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    # NEW: Simplified - just use LLM judge score directly
     behavior = dict(rule_behavior)
-    judge_behavior_score = score_value(judge.get("behavioral_realism_score"), rule_behavior["score"])
-    judge_usi = normalize_user_sim_index(judge.get("user_sim_index"))
-    behavior["rule_score"] = rule_behavior["score"]
-    behavior["llm_behavioral_realism_score"] = judge_behavior_score
-    behavior["user_sim_index"] = judge_usi
-    behavior["score"] = round(mean([rule_behavior["distribution_alignment_score"], judge_behavior_score, judge_usi["score"]]), 3)
+    judge_score = judge.get("behavioral_realism_score", 0.0)
+    behavior["rule_score"] = rule_behavior.get("score", 0.0)
+    behavior["llm_judge_score"] = judge_score
+    behavior["score"] = round(judge_score, 3)
     return behavior
 
 
 def apply_goal_judge(rule_goal: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    # NEW: Simplified - just use LLM judge score directly
     goal = dict(rule_goal)
-    llm_goal_score = score_value(judge.get("goal_alignment_score"), rule_goal["score"])
-    goal["rule_score"] = rule_goal["score"]
-    goal["llm_goal_alignment_score"] = llm_goal_score
-    goal["score"] = round(mean([rule_goal["knowledge_boundary_score"], rule_goal["goal_persistence_score"], llm_goal_score]), 3)
+    judge_score = judge.get("goal_alignment_score", 0.0)
+    goal["rule_score"] = rule_goal.get("score", 0.0)
+    goal["llm_judge_score"] = judge_score
+    goal["score"] = round(judge_score, 3)
     return goal
 
 
 def apply_cooperation_judge(rule_cooperation: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    # NEW: Simplified - just use LLM judge score directly
     cooperation = dict(rule_cooperation)
-    llm_score = score_value(judge.get("anti_overcooperation_score"), rule_cooperation["score"])
-    cooperation["rule_score"] = rule_cooperation["score"]
-    cooperation["llm_anti_overcooperation_score"] = llm_score
-    cooperation["overcooperation_risk"] = str(judge.get("overcooperation_risk") or "")
-    cooperation["score"] = round(mean([rule_cooperation["score"], llm_score]), 3)
+    judge_score = judge.get("anti_overcooperation_score", 0.0)
+    cooperation["rule_score"] = rule_cooperation.get("score", 0.0)
+    cooperation["llm_judge_score"] = judge_score
+    cooperation["score"] = round(judge_score, 3)
     return cooperation
 
 
 def normalize_eval_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    user_sim_index_payload = normalize_user_sim_index(payload.get("user_sim_index"))
+    # NEW: Simplified judge payload focusing on three core dimensions
+    analysis = payload.get("analysis") or {}
     return {
-        "behavioral_realism_score": score_value(payload.get("behavioral_realism_score"), user_sim_index_payload["score"]),
-        "user_sim_index": user_sim_index_payload,
+        "behavioral_realism_score": score_value(payload.get("behavioral_realism_score"), 0.0),
         "goal_alignment_score": score_value(payload.get("goal_alignment_score"), 0.0),
         "anti_overcooperation_score": score_value(payload.get("anti_overcooperation_score"), 0.0),
-        "overcooperation_risk": normalize_risk(payload.get("overcooperation_risk")),
+        "overall_score": score_value(payload.get("overall_score"), 0.0),
+        "behavioral_realism_analysis": str(analysis.get("behavioral_realism_analysis", "")),
+        "goal_alignment_analysis": str(analysis.get("goal_alignment_analysis", "")),
+        "overcooperation_analysis": str(analysis.get("overcooperation_analysis", "")),
         "reasons": normalize_string_list(payload.get("reasons")),
     }
 
@@ -545,6 +589,7 @@ def render_case_report(report: Dict[str, Any]) -> str:
     behavior = report["behavioral_realism"]
     goal = report["goal_alignment"]
     coop = report["overly_cooperative"]
+    enhanced = report.get("enhanced_evaluation", {})
     lines = [
         f"# Simulator Evaluation {report['case_id']}",
         "",
@@ -581,6 +626,21 @@ def render_case_report(report: Dict[str, Any]) -> str:
         f"- simulated_accept_rate: {coop['simulated_accept_rate']:.3f}",
         f"- real_resistance_rate: {coop['real_resistance_rate']:.3f}",
         f"- simulated_resistance_rate: {coop['simulated_resistance_rate']:.3f}",
+        "",
+        "## Enhanced Evaluation",
+        "",
+        f"- opening_realism_score: {enhanced.get('opening_realism_score', 0.0):.3f}",
+        f"- information_rhythm_score: {enhanced.get('information_rhythm_score', 0.0):.3f}",
+        "",
+        "  **Opening Realism** evaluates the initial question quality:",
+        "  - Semantic similarity with target case surface problem",
+        "  - Naturalness of the opening statement",
+        "  - Risk of information leak in the opening",
+        "",
+        "  **Information Rhythm** evaluates the information release pattern:",
+        "  - Whether diagnostic info is revealed only when asked",
+        "  - Logical sequence of information release",
+        "  - Accuracy of released information against roadmap",
         "",
     ]
     if report.get("llm_judge"):
@@ -681,3 +741,39 @@ def safe_rate(count: float, total: float, default: float = 0.0) -> float:
 
 def flatten(values: Iterable[Iterable[float]]) -> list[float]:
     return [item for group in values for item in group]
+
+
+def enhanced_evaluation(
+    case_id: str,
+    simulated_transcripts: list[Dict[str, Any]],
+    artifact: KnowledgeRoadmapArtifact | None,
+) -> Dict[str, Any]:
+    """
+    Enhanced evaluation focusing on:
+    1. Opening realism (initial question quality)
+    2. Information rhythm (release pattern, timing, accuracy)
+    """
+    if not simulated_transcripts:
+        return {
+            "opening_realism_score": 0.0,
+            "information_rhythm_score": 0.0,
+        }
+
+    # Aggregate across all simulated sessions
+    opening_scores = []
+    rhythm_scores = []
+
+    for transcript in simulated_transcripts:
+        opening_stats = opening_realism_stats(transcript, artifact)
+        rhythm_stats = information_rhythm_stats(transcript, artifact)
+
+        opening_scores.append(opening_stats.get("opening_realism_score", 0.0))
+        rhythm_scores.append(rhythm_stats.get("information_rhythm_score", 0.0))
+
+    avg_opening = mean(opening_scores) if opening_scores else 0.0
+    avg_rhythm = mean(rhythm_scores) if rhythm_scores else 0.0
+
+    return {
+        "opening_realism_score": round(avg_opening, 3),
+        "information_rhythm_score": round(avg_rhythm, 3),
+    }
