@@ -4,7 +4,10 @@ from src.runtime.prompt_templates import BLIND_USER_REPLY_USER, INITIAL_USER_USE
 def test_runtime_prompts_prioritize_answering_latest_question_naturally():
     assert "allowed_content must answer the assistant's latest question first" in KNOWLEDGE_DECISION_USER
     assert "For A/B or category questions" in KNOWLEDGE_DECISION_USER
+    assert "identify the focus of the assistant's latest question" in KNOWLEDGE_DECISION_USER
+    assert "answer one natural part at a time" in KNOWLEDGE_DECISION_USER
     assert "Answer the assistant's latest question first" in BLIND_USER_REPLY_USER
+    assert "answer one natural part that matches allowed_content" in BLIND_USER_REPLY_USER
     assert "Do not simply repeat the previous user message" in BLIND_USER_REPLY_USER
 
 

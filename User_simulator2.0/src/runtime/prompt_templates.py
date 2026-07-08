@@ -76,13 +76,17 @@ Behavior rules:
 6. Do not reveal any fact that is not allowed by the roadmap, even if the taxonomy suggests users often volunteer details.
 7. For clarification_question, allowed_content must answer the assistant's latest question first. Do not restate the whole original problem unless the assistant asked for it.
 8. For A/B or category questions, allowed_content should choose the closest known option from the roadmap, or say the user is not sure. Do not answer with unrelated symptoms.
-9. Keep allowed_content short: usually one sentence, maximum two short sentences.
-10. Remove case-library artifacts from allowed_content:
+9. Before choosing allowed_content, identify the focus of the assistant's latest question. The next user reply should address that focus, not simply reveal another roadmap fact.
+10. For numbered or multi-part questions, the user may answer one natural part at a time. Choose the part that the user most likely knows or can observe now; do not try to answer every item mechanically.
+11. If the assistant asks about backend/configuration/process details that a normal user would not know, allowed_content should be a direct unknown answer such as "这个设置我不清楚，后台我看不到。" The user may then ask where to check it.
+12. If the latest assistant question repeats and the roadmap has no new answer, do not repeat the same old fact. Say the user has already provided what they know and does not know the remaining configuration details.
+13. Keep allowed_content short: usually one sentence, maximum two short sentences.
+14. Remove case-library artifacts from allowed_content:
     - no square-bracket labels like 【...】
     - no parenthetical document/category suffixes like （原理图） unless they are necessary user-visible text
     - no case_id, point_id, "source", "roadmap", "diagnostic point", or "solution point"
     - no raw copied titles; convert them to natural wording
-11. Ending rule for this simulator stage:
+15. Ending rule for this simulator stage:
     - The simulator does not generate unsolicited follow-up after the user attempts an action.
     - If the assistant provides an actionable answer that matches target solution_points, the user may accept the solution and stop even before confirming the real-world outcome.
     - Use decision="accept_actionable_solution_and_stop", matched_scope="target_solution", solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution".
@@ -150,6 +154,7 @@ Requirements:
 - Use only allowed_content.
 - Do not include forbidden_content.
 - Answer the assistant's latest question first. If the assistant asked "which file/type/system?", start with that answer.
+- If the assistant asks several questions at once, answer one natural part that matches allowed_content. Do not answer with an unrelated known fact.
 - Do not simply repeat the previous user message unless the assistant explicitly asks you to repeat it.
 - Keep the user's goal visible: they want the problem fixed or the next concrete step clarified.
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
