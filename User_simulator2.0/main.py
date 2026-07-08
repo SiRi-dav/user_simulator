@@ -20,6 +20,7 @@ from src.roadmap.relation_builder import RelationBuilder
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.review_exporter import ReviewExporter
 from src.runtime.simulator import Simulator
+from src.simulator_evaluator import SimulatorEvaluator, collect_real_case_ids
 from src.schemas import (
     BehaviorTaxonomy,
     BlindUserCaseView,
@@ -80,6 +81,12 @@ def main() -> None:
     if command == "export-metrics":
         run_export_metrics(args, config, output_dir, parser)
         return
+    if command == "evaluate-simulator":
+        run_evaluate_simulator(args, config, root, output_dir, parser)
+        return
+    if command == "select-real-cases":
+        run_select_real_cases(args, config, root, output_dir, parser)
+        return
     run_simulate(args, config, root, output_dir, logger, parser)
 
 
@@ -95,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch = subparsers.add_parser("simulate-batch", help="Run multiple target-case simulations with resume protection.")
     batch.add_argument("--config", default="config.yaml")
     batch.add_argument("--case_ids", nargs="*")
+    batch.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
     batch.add_argument("--all", action="store_true", help="Simulate all cases in knowledge_roadmaps.jsonl.")
     batch.add_argument("--limit", type=int, default=0, help="Limit selected cases after --all or --offset.")
     batch.add_argument("--offset", type=int, default=0)
@@ -109,6 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--limit", type=int, default=20)
     analyze.add_argument("--offset", type=int, default=0)
     analyze.add_argument("--case_ids", nargs="*")
+    analyze.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
     analyze.add_argument("--random", action="store_true", help="Randomly sample --limit cases instead of using offset.")
     analyze.add_argument("--seed", type=int, help="Random seed for --random case sampling.")
 
@@ -142,8 +151,22 @@ def build_parser() -> argparse.ArgumentParser:
     metrics.add_argument("--all", action="store_true", help="Evaluate all cases in simulation_logs.jsonl.")
     metrics.add_argument("--judge", action="store_true", help="Also run LLM judge for semantic quality scores.")
 
+    simulator_eval = subparsers.add_parser("evaluate-simulator", help="Compare simulated user sessions against real dialogues.")
+    simulator_eval.add_argument("--config", default="config.yaml")
+    simulator_eval.add_argument("--case_ids", nargs="*")
+    simulator_eval.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
+    simulator_eval.add_argument("--case_id")
+    simulator_eval.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
+
+    select_real = subparsers.add_parser("select-real-cases", help="Select case ids that have real historical dialogues.")
+    select_real.add_argument("--config", default="config.yaml")
+    select_real.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
+    select_real.add_argument("--limit", type=int, default=20)
+    select_real.add_argument("--offset", type=int, default=0)
+    select_real.add_argument("--output", default="outputs/real_dialogue_case_ids.txt")
+
     # Backward-compatible direct invocation: python main.py --case_id ...
-    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "simulate-batch", "mine-behavior", "analyze-cases", "export-review", "sanitize-blind-views", "export-transcripts", "export-metrics", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "simulate-batch", "mine-behavior", "analyze-cases", "export-review", "sanitize-blind-views", "export-transcripts", "export-metrics", "evaluate-simulator", "select-real-cases", "-h", "--help"}:
         add_simulate_args(parser)
     return parser
 
@@ -197,8 +220,9 @@ def run_analyze_cases(
     parser: argparse.ArgumentParser,
 ) -> None:
     cases = load_configured_cases(config, root, parser)
-    if args.case_ids:
-        selected_cases = [get_case(cases, case_id) for case_id in args.case_ids]
+    explicit_case_ids = collect_requested_case_ids(args)
+    if explicit_case_ids:
+        selected_cases = [get_case(cases, case_id) for case_id in explicit_case_ids]
     elif args.random:
         sampler = random.Random(args.seed)
         sample_size = min(args.limit, len(cases))
@@ -498,13 +522,70 @@ def run_export_metrics(args: argparse.Namespace, config: Dict[str, Any], output_
     print(f"Exported {len(paths)} metrics file(s) to: {output_dir / 'metrics'}")
 
 
+def run_evaluate_simulator(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    parser: argparse.ArgumentParser,
+) -> None:
+    case_ids = collect_requested_case_ids(args)
+    if args.case_id:
+        case_ids.append(args.case_id)
+    case_ids = [case_id for case_id in case_ids if case_id]
+    if not case_ids:
+        parser.error("evaluate-simulator requires --case_id <CASE_ID> or --case_ids <CASE_ID...>")
+    dialogues_config = args.dialogues or config.get("paths", {}).get("dialogues")
+    if not dialogues_config:
+        parser.error("Missing dialogue path. Use --dialogues or set paths.dialogues in config.yaml.")
+    dialogues_path = resolve_path(root, str(dialogues_config))
+    if not dialogues_path.exists():
+        parser.error(f"Configured historical dialogue file does not exist: {dialogues_path}")
+    knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
+    evaluator = SimulatorEvaluator(output_dir, knowledge_artifacts)
+    paths = evaluator.evaluate(case_ids, dialogues_path, config.get("dialogue_fields"))
+    print(f"Exported simulator evaluation to: {output_dir / 'simulator_eval'}")
+    for path in paths:
+        print(path)
+
+
+def run_select_real_cases(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    parser: argparse.ArgumentParser,
+) -> None:
+    dialogues_path = resolve_dialogues_path(args, config, root, parser)
+    cases = load_configured_cases(config, root, parser)
+    valid_case_ids = {case.case_id for case in cases}
+    dialogues = load_dialogues(dialogues_path, config.get("dialogue_fields"))
+    selected = [case_id for case_id in collect_real_case_ids(dialogues) if case_id in valid_case_ids]
+    if args.offset:
+        selected = selected[args.offset :]
+    if args.limit:
+        selected = selected[: args.limit]
+    if not selected:
+        parser.error("No case ids with real dialogues were found in both dialogue file and case library.")
+    output_path = resolve_path(root, str(args.output))
+    if not output_path.is_absolute():
+        output_path = root / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(selected) + "\n", encoding="utf-8")
+    print(f"Selected {len(selected)} case id(s) with real dialogues:")
+    for case_id in selected:
+        print(case_id)
+    print(f"Wrote case id list to: {output_path}")
+
+
 def select_batch_case_ids(
     args: argparse.Namespace,
     knowledge_artifacts: dict[str, KnowledgeRoadmapArtifact],
     parser: argparse.ArgumentParser,
 ) -> list[str]:
-    if args.case_ids:
-        case_ids = [str(case_id) for case_id in args.case_ids]
+    requested_case_ids = collect_requested_case_ids(args)
+    if requested_case_ids:
+        case_ids = requested_case_ids
     elif args.all:
         case_ids = sorted(knowledge_artifacts)
     else:
@@ -514,6 +595,41 @@ def select_batch_case_ids(
     if args.limit:
         case_ids = case_ids[: args.limit]
     return case_ids
+
+
+def collect_requested_case_ids(args: argparse.Namespace) -> list[str]:
+    case_ids: list[str] = []
+    case_ids.extend(str(case_id).strip() for case_id in (getattr(args, "case_ids", None) or []))
+    case_ids_file = getattr(args, "case_ids_file", None)
+    if case_ids_file:
+        case_ids.extend(read_case_ids_file(Path(case_ids_file)))
+    return [case_id for case_id in case_ids if case_id]
+
+
+def read_case_ids_file(path: Path) -> list[str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    case_ids = []
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        case_ids.append(text.split()[0])
+    return case_ids
+
+
+def resolve_dialogues_path(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    parser: argparse.ArgumentParser,
+) -> Path:
+    dialogues_config = getattr(args, "dialogues", None) or config.get("paths", {}).get("dialogues")
+    if not dialogues_config:
+        parser.error("Missing dialogue path. Use --dialogues or set paths.dialogues in config.yaml.")
+    dialogues_path = resolve_path(root, str(dialogues_config))
+    if not dialogues_path.exists():
+        parser.error(f"Configured historical dialogue file does not exist: {dialogues_path}")
+    return dialogues_path
 
 
 def load_completed_batch_case_ids(path: Path) -> set[str]:

@@ -25,15 +25,30 @@ def load_dialogues(path: Path, dialogue_fields: Dict[str, Any] | None = None) ->
     records = load_raw_dialogue_records(path)
     dialogues: List[HistoricalDialogue] = []
     for index, record in enumerate(records, 1):
-        dialogue_id = normalize_text(get_configured_value(record, fields.get("dialogue_id"))) or f"dialogue_{index:06d}"
+        dialogue_id = (
+            normalize_text(get_configured_value(record, fields.get("dialogue_id")))
+            or normalize_text(record.get("__key__"))
+            or f"dialogue_{index:06d}"
+        )
         turns = extract_turns(record, fields)
         if not turns:
             continue
+        case_id_value = first_non_empty(
+            get_configured_value(record, fields.get("case_id")),
+            record.get("CaseID"),
+            record.get("caseId"),
+            record.get("case_id"),
+        )
+        final_case_id_value = first_non_empty(
+            get_configured_value(record, fields.get("final_case_id")),
+            record.get("finalCaseID"),
+            record.get("final_case_id"),
+        )
         dialogues.append(
             HistoricalDialogue(
                 dialogue_id=dialogue_id,
-                case_id=optional_text(get_configured_value(record, fields.get("case_id"))),
-                final_case_id=optional_text(get_configured_value(record, fields.get("final_case_id"))),
+                case_id=optional_text(case_id_value),
+                final_case_id=optional_text(final_case_id_value),
                 resolved=optional_bool(get_configured_value(record, fields.get("resolved"))),
                 turns=turns,
             )
@@ -59,6 +74,8 @@ def load_raw_dialogue_records(path: Path) -> List[Dict[str, Any]]:
 
 def extract_turns(record: Dict[str, Any], fields: Dict[str, Any]) -> List[DialogueTurn]:
     raw_turns = get_configured_value(record, fields.get("turns", "turns"))
+    if raw_turns is None:
+        raw_turns = first_non_empty(record.get("turns"), record.get("text"))
     speaker_key = str(fields.get("speaker", "speaker"))
     text_key = str(fields.get("text", "text"))
     if isinstance(raw_turns, list):
@@ -72,6 +89,15 @@ def extract_turns(record: Dict[str, Any], fields: Dict[str, Any]) -> List[Dialog
             text = normalize_text(get_configured_value(item, text_key) or item.get("content"))
             if speaker and text:
                 turns.append(DialogueTurn(speaker=speaker, text=text))
+                continue
+            for role_key in ("用户", "客服", "user", "assistant", "agent"):
+                if role_key not in item:
+                    continue
+                role_text = normalize_speaker(role_key)
+                content = normalize_text(item.get(role_key))
+                if role_text and content:
+                    turns.append(DialogueTurn(speaker=role_text, text=content))
+                    break
         return turns
     if isinstance(raw_turns, str):
         return parse_role_prefixed_lines(raw_turns.splitlines())

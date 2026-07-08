@@ -19,3 +19,17 @@ def test_dialogue_behavior_miner_outputs_three_artifacts(tmp_path: Path):
     assert (tmp_path / "dialogue_behavior_summaries.jsonl").exists()
     assert (tmp_path / "employee_personas.jsonl").exists()
     assert (tmp_path / "user_behavior_taxonomy.jsonl").exists()
+
+
+def test_dialogue_loader_accepts_uppercase_case_id_list(tmp_path: Path):
+    dialogue_file = tmp_path / "dialogues.json"
+    dialogue_file.write_text(
+        '{"220061420":{"text":[{"用户":"windows升级到版本11后，历史邮件内容不显示了。"},{"客服":"请问outlook里面的存档文件夹打开可以正常查看吗？"}],"CaseID":["KT00229838"]}}',
+        encoding="utf-8",
+    )
+
+    dialogues = load_dialogues(dialogue_file)
+
+    assert len(dialogues) == 1
+    assert dialogues[0].dialogue_id == "220061420"
+    assert dialogues[0].case_id == "KT00229838"

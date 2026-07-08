@@ -1048,7 +1048,62 @@ runtime 中优先级是：
 不能因为历史对话里用户经常补充很多信息，就说出 roadmap 不允许的 fact。
 ```
 
-## 14. 最推荐的完整命令顺序
+## 14. 对照真实对话评测用户模拟器
+
+如果围绕同一个 case 手动跑了多次模拟，例如 20 次，日志会都写入：
+
+```text
+outputs/simulation_logs.jsonl
+```
+
+评测命令会自动按同一个 case 下的 `turn=1` 把日志切成多条模拟 session，再从配置里的真实对话文件筛出同 case 的真实对话做对照：
+
+```bash
+python3 main.py evaluate-simulator --case_id <真实案例ID>
+```
+
+也可以一次评测多个 case：
+
+```bash
+python3 main.py evaluate-simulator --case_ids KT001 KT002 KT003
+```
+
+如果真实对话文件不使用 `config.yaml` 里的 `paths.dialogues`，可以手动指定：
+
+```bash
+python3 main.py evaluate-simulator --case_id <真实案例ID> --dialogues /path/to/真实对话.json
+```
+
+输出位置：
+
+```text
+outputs/simulator_eval/summary.md
+outputs/simulator_eval/simulator_eval.jsonl
+outputs/simulator_eval/<case_id>.md
+```
+
+当前评估分三类：
+
+```text
+Behavioral Realism:
+  - user turn count / 话语长度的 Wasserstein 距离
+  - 用户 dialogue act 分布的 Jensen-Shannon 散度
+  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应
+
+Goal Alignment:
+  - goal_persistence_score: 用户是否跑题
+  - knowledge_boundary_score: 是否泄露 solution 或外部 case 信息
+  - simulated_solved_rate: 模拟对话是否能围绕目标 case 走到解决/接受
+
+Overly Cooperative:
+  - simulated_accept_rate 是否明显高于真实用户
+  - simulated_resistance_rate 是否明显低于真实用户
+  - resistance 包括拒绝、追问、困惑、不满等真实用户常见阻力
+```
+
+这里的分数是规则版离线指标，适合作为第一层自动回归和筛 bad case。后续如果要做 PT3 或更细的 USI，可以在这个输出基础上抽样给人工或 LLM judge 对照评审。
+
+## 15. 最推荐的完整命令顺序
 
 进入项目：
 
@@ -1104,7 +1159,7 @@ python3 -m pytest tests
 python3 -m compileall .
 ```
 
-## 15. 关键边界
+## 16. 关键边界
 
 最重要的边界是：
 
