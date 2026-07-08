@@ -34,3 +34,10 @@ def test_runtime_prompt_allows_stop_when_actionable_solution_is_accepted():
     assert "does not generate unsolicited follow-up" in KNOWLEDGE_DECISION_USER
     assert "matches target solution_points" in KNOWLEDGE_DECISION_USER
     assert "do not say you will come back later with results" in BLIND_USER_REPLY_USER
+
+
+def test_runtime_prompt_allows_stop_when_assistant_cannot_solve():
+    assert "assistant_unable_to_solve_stop" in KNOWLEDGE_DECISION_USER
+    assert "assistant_unable_to_provide_effective_solution" in KNOWLEDGE_DECISION_USER
+    assert "Do not pretend the problem is solved" in KNOWLEDGE_DECISION_USER
+    assert "could not provide an effective solution" in BLIND_USER_REPLY_USER
