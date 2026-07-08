@@ -230,4 +230,19 @@ class MockLLMClient(LLMClient):
                 "overall_score": 0.8875,
                 "reasons": ["mock judge result"],
             }
+        if schema_name == "SimulatorEvalJudge":
+            return {
+                "behavioral_realism_score": 0.82,
+                "user_sim_index": {
+                    "score": 0.8,
+                    "communication_style": 0.85,
+                    "information_pattern": 0.8,
+                    "clarification_behavior": 0.75,
+                    "error_reaction": 0.8,
+                },
+                "goal_alignment_score": 0.9,
+                "anti_overcooperation_score": 0.7,
+                "overcooperation_risk": "medium",
+                "reasons": ["mock simulator eval judge result"],
+            }
         return {}

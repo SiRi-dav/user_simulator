@@ -157,6 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     simulator_eval.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
     simulator_eval.add_argument("--case_id")
     simulator_eval.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
+    simulator_eval.add_argument("--judge", action="store_true", help="Use LLM judge for semantic realism, goal alignment, and over-cooperation.")
 
     select_real = subparsers.add_parser("select-real-cases", help="Select case ids that have real historical dialogues.")
     select_real.add_argument("--config", default="config.yaml")
@@ -542,8 +543,9 @@ def run_evaluate_simulator(
     if not dialogues_path.exists():
         parser.error(f"Configured historical dialogue file does not exist: {dialogues_path}")
     knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
-    evaluator = SimulatorEvaluator(output_dir, knowledge_artifacts)
-    paths = evaluator.evaluate(case_ids, dialogues_path, config.get("dialogue_fields"))
+    llm_client = OpenAICompatibleClient.from_config(config) if args.judge else None
+    evaluator = SimulatorEvaluator(output_dir, knowledge_artifacts, llm_client=llm_client)
+    paths = evaluator.evaluate(case_ids, dialogues_path, config.get("dialogue_fields"), use_judge=args.judge)
     print(f"Exported simulator evaluation to: {output_dir / 'simulator_eval'}")
     for path in paths:
         print(path)

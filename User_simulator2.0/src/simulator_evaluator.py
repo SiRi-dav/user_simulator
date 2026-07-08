@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from src.behavior_mining.dialogue_loader import load_dialogues
+from src.llm.llm_client import LLMClient
 from src.metrics_exporter import knowledge_boundary_stats
 from src.review_exporter import safe_filename
-from src.schemas import HistoricalDialogue, KnowledgeRoadmapArtifact
+from src.schemas import HistoricalDialogue, KnowledgeRoadmapArtifact, model_to_dict
 from src.transcript_exporter import build_transcript, read_simulation_logs
+from src.utils.json_utils import dumps_json
 from src.utils.jsonl import write_jsonl
 
 
@@ -24,17 +26,67 @@ INFO_MARKERS = ("报错", "提示", "显示", "系统", "电脑", "账号", "邮
 OFF_TOPIC_MARKERS = ("天气", "吃饭", "旅游", "电影", "小说", "股票", "游戏")
 
 
+SIMULATOR_EVAL_JUDGE_SYSTEM = """你是企业 IT 客服用户模拟器的评测专家。
+你会对比真实用户对话和模拟用户对话，只评估“模拟用户”是否像真实用户、是否坚持目标、是否过度合作。
+请只输出合法 JSON，不要输出解释性正文。"""
+
+
+SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
+{case_id}
+
+真实对话样本:
+{real_transcripts_json}
+
+模拟对话样本:
+{simulated_transcripts_json}
+
+目标 case roadmap:
+{roadmap_json}
+
+规则统计摘要:
+{feature_summary_json}
+
+请评估这些规则指标难以可靠判断的语义维度：
+1. behavioral_realism_score: 模拟用户在交流风格、信息透露节奏、澄清/困惑/错误反应上是否像真实用户。
+2. user_sim_index: 细分为 communication_style、information_pattern、clarification_behavior、error_reaction，并给 score。
+3. goal_alignment_score: 模拟用户是否始终围绕目标 case，是否没有偏离/偷看答案/提前泄露解决方案。
+4. anti_overcooperation_score: 模拟用户是否避免过度配合；真实用户会有困惑、犹豫、追问、拒绝或失败反馈时，模拟用户是否也合理表现。
+
+分数均为 0.0 到 1.0，越高越好。返回 JSON：
+{{
+  "behavioral_realism_score": 0.0,
+  "user_sim_index": {{
+    "score": 0.0,
+    "communication_style": 0.0,
+    "information_pattern": 0.0,
+    "clarification_behavior": 0.0,
+    "error_reaction": 0.0
+  }},
+  "goal_alignment_score": 0.0,
+  "anti_overcooperation_score": 0.0,
+  "overcooperation_risk": "low|medium|high",
+  "reasons": ["..."]
+}}"""
+
+
 class SimulatorEvaluator:
-    def __init__(self, output_dir: Path, knowledge_artifacts: dict[str, KnowledgeRoadmapArtifact]):
+    def __init__(
+        self,
+        output_dir: Path,
+        knowledge_artifacts: dict[str, KnowledgeRoadmapArtifact],
+        llm_client: LLMClient | None = None,
+    ):
         self.output_dir = output_dir
         self.eval_dir = output_dir / "simulator_eval"
         self.knowledge_artifacts = knowledge_artifacts
+        self.llm_client = llm_client
 
     def evaluate(
         self,
         case_ids: Iterable[str],
         dialogues_path: Path,
         dialogue_fields: Dict[str, Any] | None = None,
+        use_judge: bool = False,
     ) -> list[Path]:
         case_ids_list = [str(case_id) for case_id in case_ids]
         real_dialogues = load_dialogues(dialogues_path, dialogue_fields)
@@ -46,7 +98,7 @@ class SimulatorEvaluator:
                 raise ValueError(f"No real dialogues found for case_id: {case_id}")
             if not simulated_transcripts:
                 raise ValueError(f"No simulated sessions found for case_id: {case_id}")
-            reports.append(self.evaluate_case(case_id, real_transcripts, simulated_transcripts))
+            reports.append(self.evaluate_case(case_id, real_transcripts, simulated_transcripts, use_judge=use_judge))
         return self.write_outputs(reports)
 
     def evaluate_case(
@@ -54,6 +106,7 @@ class SimulatorEvaluator:
         case_id: str,
         real_transcripts: list[Dict[str, Any]],
         simulated_transcripts: list[Dict[str, Any]],
+        use_judge: bool = False,
     ) -> Dict[str, Any]:
         artifact = self.knowledge_artifacts.get(case_id)
         real_features = [extract_features(item) for item in real_transcripts]
@@ -61,6 +114,26 @@ class SimulatorEvaluator:
         behavior = behavioral_realism(real_features, sim_features)
         goal = goal_alignment(case_id, simulated_transcripts, sim_features, artifact)
         cooperation = overly_cooperative(real_features, sim_features)
+        llm_judge: Dict[str, Any] | None = None
+        if use_judge:
+            if self.llm_client is None:
+                raise ValueError("LLM judge requested but no llm_client was configured.")
+            llm_judge = self.judge_case(
+                case_id,
+                real_transcripts,
+                simulated_transcripts,
+                artifact,
+                {
+                    "real": summarize_features(real_features),
+                    "simulated": summarize_features(sim_features),
+                    "rule_behavioral_realism": behavior,
+                    "rule_goal_alignment": goal,
+                    "rule_overly_cooperative": cooperation,
+                },
+            )
+            behavior = apply_behavior_judge(behavior, llm_judge)
+            goal = apply_goal_judge(goal, llm_judge)
+            cooperation = apply_cooperation_judge(cooperation, llm_judge)
         overall = round(
             weighted_average(
                 {
@@ -80,9 +153,34 @@ class SimulatorEvaluator:
             "behavioral_realism": behavior,
             "goal_alignment": goal,
             "overly_cooperative": cooperation,
+            "llm_judge": llm_judge,
             "real_feature_summary": summarize_features(real_features),
             "simulated_feature_summary": summarize_features(sim_features),
         }
+
+    def judge_case(
+        self,
+        case_id: str,
+        real_transcripts: list[Dict[str, Any]],
+        simulated_transcripts: list[Dict[str, Any]],
+        artifact: KnowledgeRoadmapArtifact | None,
+        feature_summary: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if self.llm_client is None:
+            raise ValueError("LLM judge requires llm_client")
+        roadmap = model_to_dict(artifact.roadmap) if artifact else {}
+        payload = self.llm_client.generate_json(
+            SIMULATOR_EVAL_JUDGE_SYSTEM,
+            SIMULATOR_EVAL_JUDGE_USER.format(
+                case_id=case_id,
+                real_transcripts_json=dumps_json(sample_transcripts(real_transcripts)),
+                simulated_transcripts_json=dumps_json(sample_transcripts(simulated_transcripts)),
+                roadmap_json=dumps_json(roadmap),
+                feature_summary_json=dumps_json(feature_summary),
+            ),
+            schema_name="SimulatorEvalJudge",
+        )
+        return normalize_eval_judge_payload(payload)
 
     def write_outputs(self, reports: list[Dict[str, Any]]) -> list[Path]:
         self.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -312,6 +410,94 @@ def overly_cooperative(real_features: list[Dict[str, Any]], sim_features: list[D
     }
 
 
+def apply_behavior_judge(rule_behavior: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    behavior = dict(rule_behavior)
+    judge_behavior_score = score_value(judge.get("behavioral_realism_score"), rule_behavior["score"])
+    judge_usi = normalize_user_sim_index(judge.get("user_sim_index"))
+    behavior["rule_score"] = rule_behavior["score"]
+    behavior["llm_behavioral_realism_score"] = judge_behavior_score
+    behavior["user_sim_index"] = judge_usi
+    behavior["score"] = round(mean([rule_behavior["distribution_alignment_score"], judge_behavior_score, judge_usi["score"]]), 3)
+    return behavior
+
+
+def apply_goal_judge(rule_goal: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    goal = dict(rule_goal)
+    llm_goal_score = score_value(judge.get("goal_alignment_score"), rule_goal["score"])
+    goal["rule_score"] = rule_goal["score"]
+    goal["llm_goal_alignment_score"] = llm_goal_score
+    goal["score"] = round(mean([rule_goal["knowledge_boundary_score"], rule_goal["goal_persistence_score"], llm_goal_score]), 3)
+    return goal
+
+
+def apply_cooperation_judge(rule_cooperation: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    cooperation = dict(rule_cooperation)
+    llm_score = score_value(judge.get("anti_overcooperation_score"), rule_cooperation["score"])
+    cooperation["rule_score"] = rule_cooperation["score"]
+    cooperation["llm_anti_overcooperation_score"] = llm_score
+    cooperation["overcooperation_risk"] = str(judge.get("overcooperation_risk") or "")
+    cooperation["score"] = round(mean([rule_cooperation["score"], llm_score]), 3)
+    return cooperation
+
+
+def normalize_eval_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    user_sim_index_payload = normalize_user_sim_index(payload.get("user_sim_index"))
+    return {
+        "behavioral_realism_score": score_value(payload.get("behavioral_realism_score"), user_sim_index_payload["score"]),
+        "user_sim_index": user_sim_index_payload,
+        "goal_alignment_score": score_value(payload.get("goal_alignment_score"), 0.0),
+        "anti_overcooperation_score": score_value(payload.get("anti_overcooperation_score"), 0.0),
+        "overcooperation_risk": normalize_risk(payload.get("overcooperation_risk")),
+        "reasons": normalize_string_list(payload.get("reasons")),
+    }
+
+
+def normalize_user_sim_index(value: Any) -> Dict[str, float]:
+    payload = value if isinstance(value, dict) else {}
+    fields = {
+        "communication_style": score_value(payload.get("communication_style"), 0.0),
+        "information_pattern": score_value(payload.get("information_pattern"), 0.0),
+        "clarification_behavior": score_value(payload.get("clarification_behavior"), 0.0),
+        "error_reaction": score_value(payload.get("error_reaction"), 0.0),
+    }
+    score = score_value(payload.get("score"), mean(fields.values()))
+    return {"score": score, **fields}
+
+
+def score_value(value: Any, default: float = 0.0) -> float:
+    try:
+        return round(max(0.0, min(1.0, float(value))), 3)
+    except (TypeError, ValueError):
+        return round(max(0.0, min(1.0, float(default))), 3)
+
+
+def normalize_risk(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in {"low", "medium", "high"} else "medium"
+
+
+def normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()][:8]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def sample_transcripts(transcripts: list[Dict[str, Any]], limit: int = 3) -> list[Dict[str, Any]]:
+    return [compact_transcript(transcript) for transcript in transcripts[:limit]]
+
+
+def compact_transcript(transcript: Dict[str, Any]) -> Dict[str, Any]:
+    messages = transcript.get("messages") or []
+    return {
+        "dialogue_id": transcript.get("dialogue_id", ""),
+        "case_id": transcript.get("case_id", ""),
+        "turn_count": transcript.get("turn_count", len(messages)),
+        "solution_status": transcript.get("solution_status", ""),
+        "messages": messages[:16],
+    }
+
+
 def resistance_rate(features: Dict[str, Any]) -> float:
     return features["reject_rate"] + features["clarification_rate"] + features["confusion_rate"] + features["frustration_rate"]
 
@@ -348,7 +534,10 @@ def render_eval_summary(reports: list[Dict[str, Any]]) -> str:
             )
         )
     lines.append("")
-    lines.append("Scores are rule-based offline estimates. Use them for regression and case triage, then sample low-score cases for human review.")
+    if any(report.get("llm_judge") for report in reports):
+        lines.append("Scores combine rule-based distribution metrics with LLM judge scores for semantic realism, goal alignment, and over-cooperation.")
+    else:
+        lines.append("Scores are rule-based offline estimates. Re-run with --judge to add LLM semantic judging for realism, goal alignment, and over-cooperation.")
     return "\n".join(lines) + "\n"
 
 
@@ -366,6 +555,8 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "## Behavioral Realism",
         "",
         f"- score: {behavior['score']:.3f}",
+        f"- rule_score: {behavior.get('rule_score', behavior['score'])}",
+        f"- llm_behavioral_realism_score: {behavior.get('llm_behavioral_realism_score', '')}",
         f"- dialogue_act_jsd: {behavior['dialogue_act_jsd']:.3f}",
         f"- session_length_wasserstein: {behavior['session_length_wasserstein']:.3f}",
         f"- words_per_turn_wasserstein: {behavior['words_per_turn_wasserstein']:.3f}",
@@ -374,6 +565,8 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "## Goal Alignment",
         "",
         f"- score: {goal['score']:.3f}",
+        f"- rule_score: {goal.get('rule_score', goal['score'])}",
+        f"- llm_goal_alignment_score: {goal.get('llm_goal_alignment_score', '')}",
         f"- goal_persistence_score: {goal['goal_persistence_score']:.3f}",
         f"- knowledge_boundary_score: {goal['knowledge_boundary_score']:.3f}",
         f"- simulated_solved_rate: {goal['simulated_solved_rate']:.3f}",
@@ -381,24 +574,35 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "## Overly Cooperative",
         "",
         f"- anti_overcooperation_score: {coop['score']:.3f}",
+        f"- rule_score: {coop.get('rule_score', coop['score'])}",
+        f"- llm_anti_overcooperation_score: {coop.get('llm_anti_overcooperation_score', '')}",
+        f"- overcooperation_risk: {coop.get('overcooperation_risk', '')}",
         f"- real_accept_rate: {coop['real_accept_rate']:.3f}",
         f"- simulated_accept_rate: {coop['simulated_accept_rate']:.3f}",
         f"- real_resistance_rate: {coop['real_resistance_rate']:.3f}",
         f"- simulated_resistance_rate: {coop['simulated_resistance_rate']:.3f}",
         "",
-        "## Feature Summary",
-        "",
-        "```json",
-        json.dumps(
-            {
-                "real": report["real_feature_summary"],
-                "simulated": report["simulated_feature_summary"],
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        "```",
     ]
+    if report.get("llm_judge"):
+        lines.extend(["## LLM Judge Reasons", ""])
+        lines.extend(f"- {reason}" for reason in report["llm_judge"].get("reasons", []))
+        lines.append("")
+    lines.extend(
+        [
+            "## Feature Summary",
+            "",
+            "```json",
+            json.dumps(
+                {
+                    "real": report["real_feature_summary"],
+                    "simulated": report["simulated_feature_summary"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "```",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

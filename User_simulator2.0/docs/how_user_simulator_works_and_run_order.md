@@ -1050,13 +1050,13 @@ runtime 中优先级是：
 
 ## 14. 对照真实对话评测用户模拟器
 
-如果围绕同一个 case 手动跑了多次模拟，例如 20 次，日志会都写入：
+如果从真实对话文件里选出 20 个有 `CaseID` 的 case，并且每个 case 各跑一次模拟，日志会写入：
 
 ```text
 outputs/simulation_logs.jsonl
 ```
 
-评测命令会自动按同一个 case 下的 `turn=1` 把日志切成多条模拟 session，再从配置里的真实对话文件筛出同 case 的真实对话做对照：
+评测命令会从配置里的真实对话文件筛出同 case 的真实对话，再和对应 case 的模拟对话做对照：
 
 ```bash
 python3 main.py evaluate-simulator --case_id <真实案例ID>
@@ -1066,6 +1066,18 @@ python3 main.py evaluate-simulator --case_id <真实案例ID>
 
 ```bash
 python3 main.py evaluate-simulator --case_ids KT001 KT002 KT003
+```
+
+如果前面用 `select-real-cases` 生成了 20 个真实 case 列表，直接复用这个文件：
+
+```bash
+python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt
+```
+
+默认评估是规则统计版。如果要让 LLM judge 判断更依赖语义的指标，正式测评建议加：
+
+```bash
+python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --judge
 ```
 
 如果真实对话文件不使用 `config.yaml` 里的 `paths.dialogues`，可以手动指定：
@@ -1088,20 +1100,22 @@ outputs/simulator_eval/<case_id>.md
 Behavioral Realism:
   - user turn count / 话语长度的 Wasserstein 距离
   - 用户 dialogue act 分布的 Jensen-Shannon 散度
-  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应
+  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应；开启 --judge 后由 LLM 语义判断
 
 Goal Alignment:
   - goal_persistence_score: 用户是否跑题
   - knowledge_boundary_score: 是否泄露 solution 或外部 case 信息
   - simulated_solved_rate: 模拟对话是否能围绕目标 case 走到解决/接受
+  - 开启 --judge 后，LLM 额外判断用户是否真的保持目标一致、是否像偷看答案
 
 Overly Cooperative:
   - simulated_accept_rate 是否明显高于真实用户
   - simulated_resistance_rate 是否明显低于真实用户
   - resistance 包括拒绝、追问、困惑、不满等真实用户常见阻力
+  - 开启 --judge 后，LLM 判断是否存在过度配合、过早接受、缺少真实阻力
 ```
 
-这里的分数是规则版离线指标，适合作为第一层自动回归和筛 bad case。后续如果要做 PT3 或更细的 USI，可以在这个输出基础上抽样给人工或 LLM judge 对照评审。
+规则版适合作为第一层自动回归和筛 bad case。`--judge` 版会调用配置里的 LLM，对 USI、目标一致性、过度合作做语义评审；JSD、Wasserstein 这类统计分布指标仍然由规则计算。
 
 ## 15. 最推荐的完整命令顺序
 

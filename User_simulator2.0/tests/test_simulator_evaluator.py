@@ -1,5 +1,9 @@
+from pathlib import Path
+
+from src.llm.mock_llm_client import MockLLMClient
 from src.schemas import DialogueTurn, HistoricalDialogue
 from src.simulator_evaluator import (
+    SimulatorEvaluator,
     behavioral_realism,
     collect_real_case_ids,
     extract_features,
@@ -85,3 +89,34 @@ def test_behavioral_realism_returns_bounded_score():
 
     assert 0.0 <= result["score"] <= 1.0
     assert 0.0 <= result["user_sim_index"]["score"] <= 1.0
+
+
+def test_evaluate_case_can_use_llm_judge(tmp_path: Path):
+    real = [
+        {
+            "case_id": "KT001",
+            "messages": [
+                {"role": "user", "content": "我的邮箱打不开"},
+                {"role": "assistant", "content": "有什么提示？"},
+                {"role": "user", "content": "提示账号异常"},
+            ],
+        }
+    ]
+    simulated = [
+        {
+            "case_id": "KT001",
+            "messages": [
+                {"role": "user", "content": "邮箱打不开了"},
+                {"role": "assistant", "content": "有什么提示？"},
+                {"role": "user", "content": "显示账号异常"},
+            ],
+        }
+    ]
+    evaluator = SimulatorEvaluator(tmp_path, {}, llm_client=MockLLMClient())
+
+    result = evaluator.evaluate_case("KT001", real, simulated, use_judge=True)
+
+    assert result["llm_judge"]["behavioral_realism_score"] == 0.82
+    assert result["behavioral_realism"]["llm_behavioral_realism_score"] == 0.82
+    assert result["goal_alignment"]["llm_goal_alignment_score"] == 0.9
+    assert result["overly_cooperative"]["llm_anti_overcooperation_score"] == 0.7
