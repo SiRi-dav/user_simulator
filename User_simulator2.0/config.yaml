@@ -42,7 +42,15 @@ assistant:
   # api: call the real enterprise assistant pipeline.
   mode: "manual"
   base_url: "http://10.67.43.6:8338"
+  policy_base_url: "http://10.67.43.14:8338"
+  response_base_url: "http://10.67.43.14:8338"
   timeout: 120
+  query_path: "/query"
+  trigger_path: "/trigger"
+  policy_path: "/policy"
+  response_path: "/response"
+  allow_missing_policy: true
+  missing_policy_value: ""
   default_cases: "无，目前知识不足以解决用户需求"
   common_sense_cases: "无，目前用户需求仅需要常识解决"
   no_rag_cases: "无，目前未配置案例检索结果"
