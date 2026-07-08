@@ -8,7 +8,7 @@
 
 当前版本的核心原则是：不要做 rule-based MVP。所有核心判断、抽取、分类、匹配、决策和回复生成都通过 LLM 完成。
 
-目前 assistant 回复先由人工输入。User Simulator 侧仍然全流程走 LLM，包括：
+默认 assistant 回复由人工输入；也可以通过 `--assistant_mode api` 接入真实 assistant。User Simulator 侧仍然全流程走 LLM，包括：
 
 - related case retrieval query generation
 - related case selection
@@ -66,7 +66,7 @@
 1. 根据 `--case_id` 从 `outputs/knowledge_roadmaps.jsonl` 读取预生成路书
 2. 读取 `outputs/employee_personas.jsonl` 和 `outputs/user_behavior_taxonomy.jsonl`
 3. `Simulator.start()` 用 LLM 生成初始用户发言
-4. 人工在命令行输入 assistant 回复
+4. 人工在命令行输入 assistant 回复，或调用真实 assistant API
 5. `Simulator.step()` 串起：
     - Blind User 解析 assistant act
     - Knowledge Module 做知识决策
@@ -92,26 +92,9 @@
 - `analyze-cases`: 批量分析 case 并生成可复用路书
 - `simulate`: 读取预生成路书并运行对话
 - 打印用户模拟器回复
-- 接收人工输入的 assistant 回复
+- 接收人工输入的 assistant 回复，或调用真实 assistant API
 
-真实 assistant 的未来接入点也在这里：
-
-```python
-assistant_text = input("Assistant> ").strip()
-# Real assistant integration point:
-# Replace the manual input above with a call to your enterprise assistant.
-```
-
-后续接入真实 assistant 时，可以把这一行替换为：
-
-```python
-assistant_text = call_real_assistant(
-    user_text=simulator.dialogue_history[-1]["content"],
-    dialogue_history=simulator.dialogue_history,
-    config=config.get("assistant", {}),
-)
-print(f"Assistant> {assistant_text}")
-```
+真实 assistant 接入也在这里，通过 `src/assistant/real_assistant_client.py` 调用 `/query`、`/trigger`、`/policy`、`/response` 四个接口。
 
 ### `config.yaml`
 
@@ -675,21 +658,28 @@ Blind User 的限制：
 
 ## 12. Assistant 接入预留：`src/assistant/`
 
-当前 `src/assistant/` 只保留包结构，没有真实实现。
+`src/assistant/real_assistant_client.py` 是真实 assistant HTTP adapter。
 
-目前 assistant 回复由命令行人工输入：
+默认 assistant 回复由命令行人工输入：
 
 ```text
 Assistant>
 ```
 
-后续接入真实 assistant 时，推荐在 `src/assistant/` 下新增一个 client，例如：
+如果要调用真实 assistant：
 
-```text
-src/assistant/enterprise_assistant_client.py
+```bash
+python3 main.py simulate --case_id <真实案例ID> --assistant_mode api --max_turns 8
 ```
 
-然后在 `main.py` 的 runtime loop 中替换人工输入。
+它会按下面顺序调用：
+
+```text
+POST /query    {"dialogue": dialogue}
+POST /trigger  {"dialogue": dialogue, "query": query}
+POST /policy   {"dialogue": dialogue, "cases": cases}
+POST /response {"dialogue": dialogue, "policy": policy, "cases": cases}
+```
 
 ## 13. Behavior Mining 阶段：`src/behavior_mining/`
 
@@ -1082,6 +1072,14 @@ Assistant> 是登录不上还是打开就退出？
 User: 是打开以后就直接退出来了，还没到登录那一步。
 ```
 
+如果要调用真实 assistant，而不是人工输入：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --assistant_mode api --max_turns 8
+```
+
+程序会把当前完整 `dialogue_history` 发给真实 assistant pipeline，并把 `/response` 返回值打印为 `Assistant>`。
+
 如果 assistant 给出命中 solution point 的可执行方案，当前阶段允许用户接受方案并结束：
 
 ```text
@@ -1148,13 +1146,24 @@ python3 main.py --case_id <真实案例ID> --persona low_tech
 
 ### 接入真实 assistant
 
-推荐新增：
+当前已提供：
 
 ```text
-src/assistant/enterprise_assistant_client.py
+src/assistant/real_assistant_client.py
 ```
 
-并在 `main.py` 的 runtime loop 中替换人工输入。
+运行时使用：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --assistant_mode api --max_turns 8
+```
+
+如果希望默认就是 api 模式，可以在 `config.yaml` 中设置：
+
+```yaml
+assistant:
+  mode: "api"
+```
 
 ### 修改真实 case 数据路径
 

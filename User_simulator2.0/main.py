@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from src.assistant.real_assistant_client import RealAssistantClient
 from src.behavior_mining.behavior_miner import DialogueBehaviorMiner
 from src.behavior_mining.dialogue_loader import load_dialogues
 from src.data_loader import get_case, load_cases
@@ -105,6 +106,11 @@ def add_simulate_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--persona", default="low_tech", choices=sorted(PERSONAS))
     parser.add_argument("--persona_id")
     parser.add_argument("--max_turns", type=int, default=6)
+    parser.add_argument(
+        "--assistant_mode",
+        choices=("manual", "api"),
+        help="manual reads Assistant> from terminal; api calls the configured real assistant.",
+    )
     parser.add_argument("--list_cases", type=int, default=0, help="List the first N cases from the configured case library and exit.")
 
 
@@ -236,17 +242,14 @@ def run_simulate(
 
     user_text = simulator.start()
     print(f"User: {user_text}")
+    assistant_mode = args.assistant_mode or str(config.get("assistant", {}).get("mode") or "manual")
+    assistant_client = build_assistant_client(config) if assistant_mode == "api" else None
     while not simulator.state.should_stop and simulator.state.turn_count < args.max_turns:
-        assistant_text = input("Assistant> ").strip()
-        # Real assistant integration point:
-        # Replace the manual input above with a call to your enterprise assistant.
-        # Recommended shape:
-        #   assistant_text = call_real_assistant(
-        #       user_text=simulator.dialogue_history[-1]["content"],
-        #       dialogue_history=simulator.dialogue_history,
-        #       config=config.get("assistant", {}),
-        #   )
-        #   print(f"Assistant> {assistant_text}")
+        if assistant_client:
+            assistant_text = assistant_client.reply(simulator.dialogue_history)
+            print(f"Assistant> {assistant_text}")
+        else:
+            assistant_text = input("Assistant> ").strip()
         if not assistant_text:
             continue
         result = simulator.step(assistant_text)
@@ -255,6 +258,10 @@ def run_simulate(
             print(f"[STOP: {simulator.state.stop_reason or simulator.state.solution_status}]")
     if not simulator.state.should_stop:
         print(f"[STOP: max_turns={args.max_turns}]")
+
+
+def build_assistant_client(config: Dict[str, Any]) -> RealAssistantClient:
+    return RealAssistantClient(config.get("assistant", {}))
 
 
 def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:

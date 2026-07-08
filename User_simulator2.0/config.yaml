@@ -36,3 +36,13 @@ dialogue_fields:
 retrieval:
   candidate_top_n: 50
   related_top_k: 5
+
+assistant:
+  # manual: type assistant replies in terminal.
+  # api: call the real enterprise assistant pipeline.
+  mode: "manual"
+  base_url: "http://10.67.43.6:8338"
+  timeout: 120
+  default_cases: "无，目前知识不足以解决用户需求"
+  common_sense_cases: "无，目前用户需求仅需要常识解决"
+  no_rag_cases: "无，目前未配置案例检索结果"

@@ -71,6 +71,12 @@ python main.py analyze-cases --limit 20
 python main.py simulate --case_id <真实案例ID> --persona low_tech
 ```
 
+Call the real assistant API instead of typing `Assistant>` manually:
+
+```bash
+python main.py simulate --case_id <真实案例ID> --assistant_mode api --max_turns 8
+```
+
 Case data is loaded from the configured real case library path in `config.yaml`. `case_id` is only the target-case selector inside that library, not a replacement for the case library path.
 
 To inspect available case ids first:

@@ -126,7 +126,7 @@ outputs/user_behavior_taxonomy.jsonl
 3. 查看真实案例库里的 case id
 4. 批量运行案例分析，提前生成多个 case 的路书
 5. 选择一个已经分析过的 case 运行模拟
-6. 人工输入 assistant 回复
+6. 人工输入 assistant 回复，或通过 `--assistant_mode api` 调用真实 assistant
 ```
 
 ## 4. 第一步：进入项目目录
@@ -366,6 +366,23 @@ Assistant> 是登录不上还是打开就退出？
 ```text
 User: 是打开以后就直接退出来了，还没到登录那一步。
 ```
+
+如果要接入真实 assistant，不需要手动输入 `Assistant>`，运行：
+
+```bash
+python3 main.py simulate --case_id <真实案例ID> --assistant_mode api --max_turns 8
+```
+
+程序会把当前完整 `dialogue_history` 依次发给：
+
+```text
+POST /query
+POST /trigger
+POST /policy
+POST /response
+```
+
+并把 `/response` 的返回结果当作本轮 assistant 回复。
 
 继续输入 assistant 回复，直到：
 
