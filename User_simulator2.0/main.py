@@ -13,6 +13,7 @@ from src.data_loader import get_case, load_cases
 from src.extraction.point_extractor import PointExtractor
 from src.extraction.point_verifier import PointVerifier
 from src.llm.openai_compatible_client import OpenAICompatibleClient
+from src.metrics_exporter import MetricsExporter
 from src.retrieval.query_generator import QueryGenerator
 from src.retrieval.related_case_retriever import RelatedCaseRetriever
 from src.roadmap.relation_builder import RelationBuilder
@@ -34,6 +35,7 @@ from src.schemas import (
     RuntimeRoadmap,
     model_to_dict,
 )
+from src.transcript_exporter import TranscriptExporter
 from src.utils.jsonl import read_jsonl, write_jsonl
 from src.utils.logging import OutputLogger
 
@@ -65,6 +67,15 @@ def main() -> None:
     if command == "export-review":
         run_export_review(args, output_dir, parser)
         return
+    if command == "export-transcripts":
+        run_export_transcripts(args, output_dir, parser)
+        return
+    if command == "simulate-batch":
+        run_simulate_batch(args, config, root, output_dir, logger, parser)
+        return
+    if command == "export-metrics":
+        run_export_metrics(args, config, output_dir, parser)
+        return
     run_simulate(args, config, root, output_dir, logger, parser)
 
 
@@ -76,6 +87,18 @@ def build_parser() -> argparse.ArgumentParser:
     simulate = subparsers.add_parser("simulate", help="Run target-case user simulation.")
     simulate.add_argument("--config", default="config.yaml")
     add_simulate_args(simulate)
+
+    batch = subparsers.add_parser("simulate-batch", help="Run multiple target-case simulations with resume protection.")
+    batch.add_argument("--config", default="config.yaml")
+    batch.add_argument("--case_ids", nargs="*")
+    batch.add_argument("--all", action="store_true", help="Simulate all cases in knowledge_roadmaps.jsonl.")
+    batch.add_argument("--limit", type=int, default=0, help="Limit selected cases after --all or --offset.")
+    batch.add_argument("--offset", type=int, default=0)
+    batch.add_argument("--persona", default="low_tech", choices=sorted(PERSONAS))
+    batch.add_argument("--persona_id")
+    batch.add_argument("--max_turns", type=int, default=6)
+    batch.add_argument("--assistant_mode", choices=("api",), default="api", help="Batch mode currently calls the real assistant API.")
+    batch.add_argument("--rerun_completed", action="store_true", help="Do not skip cases already marked completed.")
 
     analyze = subparsers.add_parser("analyze-cases", help="Precompute roadmaps and knowledge artifacts for target cases.")
     analyze.add_argument("--config", default="config.yaml")
@@ -95,8 +118,19 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--case_id")
     review.add_argument("--all", action="store_true", help="Export all cases in knowledge_roadmaps.jsonl.")
 
+    transcripts = subparsers.add_parser("export-transcripts", help="Export simulation logs into readable dialogue transcripts.")
+    transcripts.add_argument("--config", default="config.yaml")
+    transcripts.add_argument("--case_id")
+    transcripts.add_argument("--all", action="store_true", help="Export all cases in simulation_logs.jsonl.")
+
+    metrics = subparsers.add_parser("export-metrics", help="Export user-simulator quality metrics from transcripts/logs.")
+    metrics.add_argument("--config", default="config.yaml")
+    metrics.add_argument("--case_id")
+    metrics.add_argument("--all", action="store_true", help="Evaluate all cases in simulation_logs.jsonl.")
+    metrics.add_argument("--judge", action="store_true", help="Also run LLM judge for semantic quality scores.")
+
     # Backward-compatible direct invocation: python main.py --case_id ...
-    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "mine-behavior", "analyze-cases", "export-review", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "simulate-batch", "mine-behavior", "analyze-cases", "export-review", "export-transcripts", "export-metrics", "-h", "--help"}:
         add_simulate_args(parser)
     return parser
 
@@ -240,6 +274,25 @@ def run_simulate(
             "Run: python3 main.py analyze-cases --case_ids "
             f"{args.case_id}"
         )
+    simulator = build_simulator_for_case(args, knowledge_artifact, output_dir, llm_client, logger, parser)
+    print(f"User: {simulator.start()}")
+    assistant_mode = args.assistant_mode or str(config.get("assistant", {}).get("mode") or "manual")
+    assistant_client = build_assistant_client(config) if assistant_mode == "api" else None
+    run_simulation_loop(simulator, int(args.max_turns), assistant_client)
+
+
+def build_assistant_client(config: Dict[str, Any]) -> RealAssistantClient:
+    return RealAssistantClient(config.get("assistant", {}))
+
+
+def build_simulator_for_case(
+    args: argparse.Namespace,
+    knowledge_artifact: KnowledgeRoadmapArtifact,
+    output_dir: Path,
+    llm_client: OpenAICompatibleClient,
+    logger: OutputLogger,
+    parser: argparse.ArgumentParser,
+) -> Simulator:
     employee_personas = load_employee_personas(output_dir / "employee_personas.jsonl")
     behavior_taxonomy = load_behavior_taxonomy(output_dir / "user_behavior_taxonomy.jsonl")
     try:
@@ -247,8 +300,7 @@ def run_simulate(
     except ValueError as exc:
         parser.error(str(exc))
     persona = model_to_dict(employee_persona) if employee_persona else PERSONAS[args.persona]
-
-    simulator = Simulator(
+    return Simulator(
         knowledge_artifact.roadmap,
         persona,
         llm_client,
@@ -257,11 +309,13 @@ def run_simulate(
         behavior_taxonomy=[model_to_dict(item) for item in behavior_taxonomy],
     )
 
-    user_text = simulator.start()
-    print(f"User: {user_text}")
-    assistant_mode = args.assistant_mode or str(config.get("assistant", {}).get("mode") or "manual")
-    assistant_client = build_assistant_client(config) if assistant_mode == "api" else None
-    while not simulator.state.should_stop and simulator.state.turn_count < args.max_turns:
+
+def run_simulation_loop(
+    simulator: Simulator,
+    max_turns: int,
+    assistant_client: RealAssistantClient | None = None,
+) -> None:
+    while not simulator.state.should_stop and simulator.state.turn_count < max_turns:
         if assistant_client:
             assistant_text = assistant_client.reply(simulator.dialogue_history)
             print(f"Assistant> {assistant_text}")
@@ -274,11 +328,7 @@ def run_simulate(
         if simulator.state.should_stop:
             print(f"[STOP: {simulator.state.stop_reason or simulator.state.solution_status}]")
     if not simulator.state.should_stop:
-        print(f"[STOP: max_turns={args.max_turns}]")
-
-
-def build_assistant_client(config: Dict[str, Any]) -> RealAssistantClient:
-    return RealAssistantClient(config.get("assistant", {}))
+        print(f"[STOP: max_turns={max_turns}]")
 
 
 def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:
@@ -299,6 +349,120 @@ def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argpar
         exporter.export_index()
         exporter.export_behavior_review()
     print(f"Exported {len(paths)} case review file(s) to: {output_dir / 'review'}")
+
+
+def run_export_transcripts(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:
+    if not args.case_id and not args.all:
+        parser.error("export-transcripts requires --case_id <CASE_ID> or --all")
+    exporter = TranscriptExporter(output_dir)
+    if args.all:
+        paths = exporter.export_cases()
+    else:
+        paths = exporter.export_case(args.case_id)
+    print(f"Exported {len(paths)} transcript file(s) to: {output_dir / 'transcripts'}")
+
+
+def run_simulate_batch(
+    args: argparse.Namespace,
+    config: Dict[str, Any],
+    root: Path,
+    output_dir: Path,
+    logger: OutputLogger,
+    parser: argparse.ArgumentParser,
+) -> None:
+    knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
+    if not knowledge_artifacts:
+        parser.error(f"No knowledge roadmaps found: {output_dir / 'knowledge_roadmaps.jsonl'}")
+    case_ids = select_batch_case_ids(args, knowledge_artifacts, parser)
+    if not case_ids:
+        parser.error("No cases selected for simulation.")
+    status_path = output_dir / "simulate_batch_status.jsonl"
+    completed = load_completed_batch_case_ids(status_path)
+    llm_client = OpenAICompatibleClient.from_config(config)
+    assistant_client = build_assistant_client(config)
+    exporter = TranscriptExporter(output_dir)
+    total = len(case_ids)
+    completed_now = 0
+    skipped = 0
+    failed = 0
+    for index, case_id in enumerate(case_ids, 1):
+        if case_id in completed and not args.rerun_completed:
+            skipped += 1
+            print(f"[{index}/{total}] Skipping completed case {case_id}")
+            continue
+        artifact = knowledge_artifacts.get(case_id)
+        if artifact is None:
+            failed += 1
+            update_batch_status(status_path, case_id, "failed", {"error": "missing knowledge roadmap"})
+            print(f"[{index}/{total}] Missing knowledge roadmap for {case_id}")
+            continue
+        print(f"[{index}/{total}] Simulating case {case_id}: {artifact.title}")
+        update_batch_status(status_path, case_id, "running", {"title": artifact.title, "max_turns": args.max_turns})
+        try:
+            simulator = build_simulator_for_case(args, artifact, output_dir, llm_client, logger, parser)
+            print(f"User: {simulator.start()}")
+            run_simulation_loop(simulator, int(args.max_turns), assistant_client)
+            status = {
+                "title": artifact.title,
+                "turn_count": simulator.state.turn_count,
+                "solution_status": simulator.state.solution_status,
+                "stop_reason": simulator.state.stop_reason or "",
+            }
+            update_batch_status(status_path, case_id, "completed", status)
+            try:
+                exporter.export_case(case_id)
+            except Exception as exc:
+                update_batch_status(status_path, case_id, "completed", {**status, "transcript_error": str(exc)})
+            completed_now += 1
+        except Exception as exc:
+            failed += 1
+            update_batch_status(status_path, case_id, "failed", {"title": artifact.title, "error_type": type(exc).__name__, "error": str(exc)})
+            print(f"[ERROR] Failed case {case_id}: {exc}")
+            continue
+    print(
+        "Batch simulation done: "
+        f"completed={completed_now}, skipped={skipped}, failed={failed}, status={status_path}"
+    )
+
+
+def run_export_metrics(args: argparse.Namespace, config: Dict[str, Any], output_dir: Path, parser: argparse.ArgumentParser) -> None:
+    if not args.case_id and not args.all:
+        parser.error("export-metrics requires --case_id <CASE_ID> or --all")
+    knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
+    llm_client = OpenAICompatibleClient.from_config(config) if args.judge else None
+    exporter = MetricsExporter(output_dir, knowledge_artifacts, llm_client=llm_client)
+    if args.all:
+        paths = exporter.export_cases(use_judge=args.judge)
+    else:
+        paths = exporter.export_case(args.case_id, use_judge=args.judge)
+    print(f"Exported {len(paths)} metrics file(s) to: {output_dir / 'metrics'}")
+
+
+def select_batch_case_ids(
+    args: argparse.Namespace,
+    knowledge_artifacts: dict[str, KnowledgeRoadmapArtifact],
+    parser: argparse.ArgumentParser,
+) -> list[str]:
+    if args.case_ids:
+        case_ids = [str(case_id) for case_id in args.case_ids]
+    elif args.all:
+        case_ids = sorted(knowledge_artifacts)
+    else:
+        parser.error("simulate-batch requires --case_ids <CASE_ID...> or --all")
+    if args.offset:
+        case_ids = case_ids[args.offset :]
+    if args.limit:
+        case_ids = case_ids[: args.limit]
+    return case_ids
+
+
+def load_completed_batch_case_ids(path: Path) -> set[str]:
+    return {str(record.get("case_id")) for record in read_jsonl(path) if record.get("status") == "completed"}
+
+
+def update_batch_status(path: Path, case_id: str, status: str, payload: Dict[str, Any]) -> None:
+    record = {"case_id": str(case_id), "status": status, **payload}
+    upsert_jsonl_by_key(path, [record], "case_id")
 
 
 def load_configured_cases(config: Dict[str, Any], root: Path, parser: argparse.ArgumentParser) -> list[Case]:

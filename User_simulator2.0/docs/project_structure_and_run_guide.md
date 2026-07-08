@@ -859,6 +859,29 @@ compact runtime roadmap 只保留：
 
 保存每一轮 runtime 对话日志。
 
+### `outputs/simulate_batch_status.jsonl`
+
+保存批量模拟的断点状态。由下面命令生成：
+
+```bash
+python3 main.py simulate-batch --case_ids <CASE_ID...> --max_turns 8
+python3 main.py simulate-batch --all --max_turns 8
+```
+
+每个 case 会记录：
+
+```text
+running
+completed
+failed
+```
+
+重跑同一条批量命令时，已经 `completed` 的 case 会自动跳过。若要强制重跑，使用：
+
+```bash
+python3 main.py simulate-batch --all --rerun_completed --max_turns 8
+```
+
 ### `outputs/dialogue_behavior_summaries.jsonl`
 
 保存每条历史对话的行为结构化总结。
@@ -918,6 +941,56 @@ behavior_assets.md
 ```
 
 用于人工检查 Blind User 可见信息、runtime roadmap、solution point、external point、related cases 和 warnings。related cases 与 warnings 来自 `case_analysis_debug.jsonl`。
+
+### `outputs/transcripts/`
+
+保存从 `outputs/simulation_logs.jsonl` 还原出的完整真实对话。由下面命令生成：
+
+```bash
+python3 main.py export-transcripts --case_id <真实案例ID>
+python3 main.py export-transcripts --all
+```
+
+包含：
+
+```text
+<case_id>.md
+<case_id>.json
+```
+
+Markdown 版本用于人工阅读，JSON 版本用于后续自动化评估。
+
+### `outputs/metrics/`
+
+保存用户模拟器质量指标。由下面命令生成：
+
+```bash
+python3 main.py export-metrics --case_id <真实案例ID>
+python3 main.py export-metrics --all
+```
+
+如果需要 LLM judge 语义复核：
+
+```bash
+python3 main.py export-metrics --case_id <真实案例ID> --judge
+python3 main.py export-metrics --all --judge
+```
+
+包含：
+
+```text
+simulation_metrics.jsonl
+summary.md
+```
+
+核心指标：
+
+```text
+answer_alignment_score
+information_progress_score
+user_knowledge_boundary_score
+interaction_realism_score
+```
 
 ## 15. Runtime 行为优先级
 

@@ -215,4 +215,13 @@ class MockLLMClient(LLMClient):
                     }
                 ]
             }
+        if schema_name == "SimulatorQualityJudge":
+            return {
+                "answer_alignment_score": 0.8,
+                "information_progress_score": 0.9,
+                "user_knowledge_boundary_score": 1.0,
+                "interaction_realism_score": 0.85,
+                "overall_score": 0.8875,
+                "reasons": ["mock judge result"],
+            }
         return {}

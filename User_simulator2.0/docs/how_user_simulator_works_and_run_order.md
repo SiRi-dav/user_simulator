@@ -389,6 +389,139 @@ POST /response
 - LLM 判断 assistant 命中目标 solution；
 - 或达到最大轮数。
 
+## 9.1 批量运行模拟对话
+
+如果要一次跑多个 case，并调用真实 assistant：
+
+```bash
+python3 main.py simulate-batch --case_ids KT001 KT002 KT003 --max_turns 8
+```
+
+也可以跑 `knowledge_roadmaps.jsonl` 里已有的全部 case：
+
+```bash
+python3 main.py simulate-batch --all --max_turns 8
+```
+
+限制数量：
+
+```bash
+python3 main.py simulate-batch --all --limit 10 --max_turns 8
+```
+
+批量模式目前默认使用真实 assistant API，相当于：
+
+```text
+assistant_mode = api
+```
+
+### 断电保护
+
+批量模拟会写状态文件：
+
+```text
+outputs/simulate_batch_status.jsonl
+```
+
+每个 case 会记录：
+
+```text
+running
+completed
+failed
+```
+
+如果中途断电或程序中断，重新执行同一条 `simulate-batch` 命令时，已经标记为 `completed` 的 case 会自动跳过，`running` 或 `failed` 的 case 会重新尝试。
+
+如果想强制重跑已经完成的 case：
+
+```bash
+python3 main.py simulate-batch --all --rerun_completed --max_turns 8
+```
+
+每个 case 结束后会自动尝试导出 transcript 到：
+
+```text
+outputs/transcripts/<case_id>.md
+outputs/transcripts/<case_id>.json
+```
+
+## 9.4 导出真实对话 Transcript
+
+`outputs/simulation_logs.jsonl` 保存的是逐轮调试日志，不适合直接人工阅读。跑完 `simulate` 后，可以导出完整对话 transcript：
+
+```bash
+python3 main.py export-transcripts --case_id <真实案例ID>
+```
+
+或者导出所有已经模拟过的 case：
+
+```bash
+python3 main.py export-transcripts --all
+```
+
+输出位置：
+
+```text
+outputs/transcripts/<case_id>.md
+outputs/transcripts/<case_id>.json
+```
+
+Markdown 里会按顺序还原：
+
+```text
+User: ...
+Assistant: ...
+User: ...
+Assistant: ...
+```
+
+JSON 版本方便后续自动化评估模块继续读取。
+
+## 9.45 导出用户模拟器质量指标
+
+跑完模拟对话后，可以离线评估用户模拟器质量：
+
+```bash
+python3 main.py export-metrics --case_id <真实案例ID>
+```
+
+或者评估所有已经模拟过的 case：
+
+```bash
+python3 main.py export-metrics --all
+```
+
+默认会使用规则统计，输出：
+
+```text
+outputs/metrics/simulation_metrics.jsonl
+outputs/metrics/summary.md
+```
+
+核心指标包括：
+
+```text
+answer_alignment_score: 用户是否回答 assistant 当前问题
+information_progress_score: 用户回复是否推动信息状态前进
+user_knowledge_boundary_score: 用户是否遵守 blind user 的知识边界
+interaction_realism_score: 用户回复是否简短自然、没有内部字段痕迹
+```
+
+如果要额外启用 LLM judge 复核语义质量：
+
+```bash
+python3 main.py export-metrics --case_id <真实案例ID> --judge
+python3 main.py export-metrics --all --judge
+```
+
+建议用法是：
+
+```text
+规则统计用于全量快速筛查；
+LLM judge 用于复核可疑样本或关键 case。
+```
+
 ## 9.5 导出人工可读 Review
 
 JSONL 文件适合程序读，不适合人工检查。分析完 case 后，可以把关键输出导出成 Markdown：
