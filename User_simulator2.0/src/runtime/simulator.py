@@ -6,20 +6,22 @@ from typing import Any, Dict, List
 from src.llm.llm_client import LLMClient
 from src.runtime.blind_user import BlindUser
 from src.runtime.knowledge_module import KnowledgeModule
-from src.schemas import DialogueState, Roadmap, SimulationTurnLog, model_to_dict
+from src.schemas import BlindUserRuntimeView, DialogueState, RuntimeRoadmap, SimulationTurnLog, model_to_dict
 from src.utils.logging import OutputLogger
 
 
 class Simulator:
     def __init__(
         self,
-        roadmap: Roadmap,
+        blind_view: BlindUserRuntimeView,
+        roadmap: RuntimeRoadmap,
         persona: Dict[str, Any],
         llm_client: LLMClient,
         logger: OutputLogger | None = None,
         employee_persona: Dict[str, Any] | None = None,
         behavior_taxonomy: List[Dict[str, Any]] | None = None,
     ):
+        self.blind_view = blind_view
         self.roadmap = roadmap
         self.persona = persona
         self.employee_persona = employee_persona or {}
@@ -33,8 +35,8 @@ class Simulator:
 
     def start(self) -> str:
         reply = self.blind_user.initial_reply(
-            self.roadmap.surface_problem,
-            self.roadmap.opening_intent,
+            self.blind_view.surface_problem,
+            self.blind_view.opening_intent,
             self.persona,
             self.employee_persona,
         )
@@ -58,7 +60,7 @@ class Simulator:
             self.persona,
             self.employee_persona,
             self.behavior_taxonomy,
-            self.roadmap.surface_problem,
+            self.blind_view.surface_problem,
             self.dialogue_history,
         )
         self._apply_state_update(decision.state_update)

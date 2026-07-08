@@ -23,6 +23,7 @@ from src.runtime.simulator import Simulator
 from src.schemas import (
     BehaviorTaxonomy,
     BlindUserCaseView,
+    BlindUserRuntimeView,
     Case,
     CaseAnalysisDebugArtifact,
     EmployeePersona,
@@ -66,6 +67,9 @@ def main() -> None:
         return
     if command == "export-review":
         run_export_review(args, output_dir, parser)
+        return
+    if command == "sanitize-blind-views":
+        run_sanitize_blind_views(args, output_dir, parser)
         return
     if command == "export-transcripts":
         run_export_transcripts(args, output_dir, parser)
@@ -118,6 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--case_id")
     review.add_argument("--all", action="store_true", help="Export all cases in knowledge_roadmaps.jsonl.")
 
+    sanitize = subparsers.add_parser(
+        "sanitize-blind-views",
+        help="Convert blind_user_case_views.jsonl into minimal blind_user_runtime_views.jsonl without point objects.",
+    )
+    sanitize.add_argument("--config", default="config.yaml")
+    sanitize.add_argument("--case_id")
+    sanitize.add_argument("--input", default="blind_user_case_views.jsonl")
+    sanitize.add_argument("--output", default="blind_user_runtime_views.jsonl")
+
     transcripts = subparsers.add_parser("export-transcripts", help="Export simulation logs into readable dialogue transcripts.")
     transcripts.add_argument("--config", default="config.yaml")
     transcripts.add_argument("--case_id")
@@ -130,7 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     metrics.add_argument("--judge", action="store_true", help="Also run LLM judge for semantic quality scores.")
 
     # Backward-compatible direct invocation: python main.py --case_id ...
-    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "simulate-batch", "mine-behavior", "analyze-cases", "export-review", "export-transcripts", "export-metrics", "-h", "--help"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"simulate", "simulate-batch", "mine-behavior", "analyze-cases", "export-review", "sanitize-blind-views", "export-transcripts", "export-metrics", "-h", "--help"}:
         add_simulate_args(parser)
     return parser
 
@@ -196,6 +209,7 @@ def run_analyze_cases(
         parser.error("No cases selected for analysis.")
     llm_client = OpenAICompatibleClient.from_config(config)
     blind_user_views: list[BlindUserCaseView] = []
+    blind_user_runtime_views: list[BlindUserRuntimeView] = []
     knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
     debug_artifacts: list[CaseAnalysisDebugArtifact] = []
     failed_cases = 0
@@ -221,14 +235,21 @@ def run_analyze_cases(
             )
             continue
         blind_user_views.append(blind_view)
+        blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
         knowledge_artifacts.append(knowledge_artifact)
         debug_artifacts.append(debug_artifact)
     if not knowledge_artifacts:
         parser.error(f"All selected cases failed. See: {output_dir / 'case_analysis_errors.jsonl'}")
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
+    blind_runtime_path = output_dir / "blind_user_runtime_views.jsonl"
     knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
     debug_path = output_dir / "case_analysis_debug.jsonl"
     total_blind_views = upsert_jsonl_by_key(blind_view_path, [model_to_dict(view) for view in blind_user_views], "case_id")
+    total_blind_runtime_views = upsert_jsonl_by_key(
+        blind_runtime_path,
+        [model_to_dict(view) for view in blind_user_runtime_views],
+        "case_id",
+    )
     total_knowledge_artifacts = upsert_jsonl_by_key(
         knowledge_path,
         [model_to_dict(artifact) for artifact in knowledge_artifacts],
@@ -241,6 +262,8 @@ def run_analyze_cases(
     )
     print(f"Upserted {len(blind_user_views)} blind-user case views to: {blind_view_path}")
     print(f"Total blind-user case views: {total_blind_views}")
+    print(f"Upserted {len(blind_user_runtime_views)} minimal blind-user runtime views to: {blind_runtime_path}")
+    print(f"Total minimal blind-user runtime views: {total_blind_runtime_views}")
     print(f"Upserted {len(knowledge_artifacts)} compact runtime roadmaps to: {knowledge_path}")
     print(f"Total knowledge roadmaps: {total_knowledge_artifacts}")
     print(f"Upserted {len(debug_artifacts)} debug artifacts to: {debug_path}")
@@ -266,6 +289,14 @@ def run_simulate(
         parser.error("--case_id is required unless --list_cases is used")
 
     llm_client = OpenAICompatibleClient.from_config(config)
+    blind_views = load_blind_user_runtime_views(output_dir / "blind_user_runtime_views.jsonl")
+    blind_view = blind_views.get(args.case_id)
+    if blind_view is None:
+        parser.error(
+            f"No minimal blind-user runtime view found for {args.case_id}. "
+            "Run: python3 main.py sanitize-blind-views, or rerun: "
+            f"python3 main.py analyze-cases --case_ids {args.case_id}"
+        )
     knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
     knowledge_artifact = knowledge_artifacts.get(args.case_id)
     if knowledge_artifact is None:
@@ -274,7 +305,7 @@ def run_simulate(
             "Run: python3 main.py analyze-cases --case_ids "
             f"{args.case_id}"
         )
-    simulator = build_simulator_for_case(args, knowledge_artifact, output_dir, llm_client, logger, parser)
+    simulator = build_simulator_for_case(args, blind_view, knowledge_artifact, output_dir, llm_client, logger, parser)
     print(f"User: {simulator.start()}")
     assistant_mode = args.assistant_mode or str(config.get("assistant", {}).get("mode") or "manual")
     assistant_client = build_assistant_client(config) if assistant_mode == "api" else None
@@ -287,6 +318,7 @@ def build_assistant_client(config: Dict[str, Any]) -> RealAssistantClient:
 
 def build_simulator_for_case(
     args: argparse.Namespace,
+    blind_view: BlindUserRuntimeView,
     knowledge_artifact: KnowledgeRoadmapArtifact,
     output_dir: Path,
     llm_client: OpenAICompatibleClient,
@@ -301,6 +333,7 @@ def build_simulator_for_case(
         parser.error(str(exc))
     persona = model_to_dict(employee_persona) if employee_persona else PERSONAS[args.persona]
     return Simulator(
+        blind_view,
         knowledge_artifact.roadmap,
         persona,
         llm_client,
@@ -351,6 +384,21 @@ def run_export_review(args: argparse.Namespace, output_dir: Path, parser: argpar
     print(f"Exported {len(paths)} case review file(s) to: {output_dir / 'review'}")
 
 
+def run_sanitize_blind_views(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:
+    input_path = output_dir / args.input
+    output_path = output_dir / args.output
+    views = load_blind_user_case_views(input_path)
+    if not views:
+        parser.error(f"No blind-user case views found: {input_path}")
+    if args.case_id and args.case_id not in views:
+        parser.error(f"No blind-user case view found for {args.case_id}: {input_path}")
+    selected_views = [views[args.case_id]] if args.case_id else list(views.values())
+    runtime_views = [build_blind_user_runtime_view(view) for view in selected_views]
+    total = upsert_jsonl_by_key(output_path, [model_to_dict(view) for view in runtime_views], "case_id")
+    print(f"Upserted {len(runtime_views)} minimal blind-user runtime view(s) to: {output_path}")
+    print(f"Total minimal blind-user runtime views: {total}")
+
+
 def run_export_transcripts(args: argparse.Namespace, output_dir: Path, parser: argparse.ArgumentParser) -> None:
     if not args.case_id and not args.all:
         parser.error("export-transcripts requires --case_id <CASE_ID> or --all")
@@ -373,6 +421,12 @@ def run_simulate_batch(
     knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
     if not knowledge_artifacts:
         parser.error(f"No knowledge roadmaps found: {output_dir / 'knowledge_roadmaps.jsonl'}")
+    blind_views = load_blind_user_runtime_views(output_dir / "blind_user_runtime_views.jsonl")
+    if not blind_views:
+        parser.error(
+            f"No minimal blind-user runtime views found: {output_dir / 'blind_user_runtime_views.jsonl'}. "
+            "Run: python3 main.py sanitize-blind-views"
+        )
     case_ids = select_batch_case_ids(args, knowledge_artifacts, parser)
     if not case_ids:
         parser.error("No cases selected for simulation.")
@@ -391,15 +445,21 @@ def run_simulate_batch(
             print(f"[{index}/{total}] Skipping completed case {case_id}")
             continue
         artifact = knowledge_artifacts.get(case_id)
+        blind_view = blind_views.get(case_id)
         if artifact is None:
             failed += 1
             update_batch_status(status_path, case_id, "failed", {"error": "missing knowledge roadmap"})
             print(f"[{index}/{total}] Missing knowledge roadmap for {case_id}")
             continue
+        if blind_view is None:
+            failed += 1
+            update_batch_status(status_path, case_id, "failed", {"error": "missing blind-user case view"})
+            print(f"[{index}/{total}] Missing blind-user case view for {case_id}")
+            continue
         print(f"[{index}/{total}] Simulating case {case_id}: {artifact.title}")
         update_batch_status(status_path, case_id, "running", {"title": artifact.title, "max_turns": args.max_turns})
         try:
-            simulator = build_simulator_for_case(args, artifact, output_dir, llm_client, logger, parser)
+            simulator = build_simulator_for_case(args, blind_view, artifact, output_dir, llm_client, logger, parser)
             print(f"User: {simulator.start()}")
             run_simulation_loop(simulator, int(args.max_turns), assistant_client)
             status = {
@@ -525,6 +585,15 @@ def build_blind_user_view(roadmap: Roadmap) -> BlindUserCaseView:
     )
 
 
+def build_blind_user_runtime_view(view: BlindUserCaseView) -> BlindUserRuntimeView:
+    return BlindUserRuntimeView(
+        case_id=view.case_id,
+        surface_problem=view.surface_problem,
+        opening_intent=view.opening_intent,
+        user_visible_facts=[point.content for point in view.user_facing_points if point.content],
+    )
+
+
 def build_runtime_roadmap(roadmap: Roadmap) -> RuntimeRoadmap:
     return RuntimeRoadmap(
         target_case_id=roadmap.target_case_id,
@@ -583,6 +652,14 @@ def load_blind_user_case_views(path: Path) -> dict[str, BlindUserCaseView]:
     views: dict[str, BlindUserCaseView] = {}
     for record in read_jsonl(path):
         view = BlindUserCaseView(**record)
+        views[view.case_id] = view
+    return views
+
+
+def load_blind_user_runtime_views(path: Path) -> dict[str, BlindUserRuntimeView]:
+    views: dict[str, BlindUserRuntimeView] = {}
+    for record in read_jsonl(path):
+        view = BlindUserRuntimeView(**record)
         views[view.case_id] = view
     return views
 

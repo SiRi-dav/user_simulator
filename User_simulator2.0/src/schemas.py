@@ -119,6 +119,13 @@ class BlindUserCaseView(BaseModel):
     user_facing_points: List[Point]
 
 
+class BlindUserRuntimeView(BaseModel):
+    case_id: str
+    surface_problem: str
+    opening_intent: str
+    user_visible_facts: List[str] = Field(default_factory=list)
+
+
 class KnowledgeRoadmapArtifact(BaseModel):
     case_id: str
     title: str = ""
