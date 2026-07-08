@@ -20,11 +20,24 @@ def extract_json_object(text: str) -> Dict[str, Any]:
             return value
     except json.JSONDecodeError:
         pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(raw[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
     left = raw.find("{")
     right = raw.rfind("}")
     if left < 0 or right < left:
         raise ValueError(f"LLM output does not contain a JSON object: {text[:300]}")
-    value = json.loads(raw[left : right + 1])
+    try:
+        value = json.loads(raw[left : right + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"LLM output contains malformed JSON object: {text[:500]}") from exc
     if not isinstance(value, dict):
         raise ValueError("LLM output JSON is not an object")
     return value

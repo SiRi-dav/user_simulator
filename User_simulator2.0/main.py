@@ -164,18 +164,33 @@ def run_analyze_cases(
     blind_user_views: list[BlindUserCaseView] = []
     knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
     debug_artifacts: list[CaseAnalysisDebugArtifact] = []
+    failed_cases = 0
     for index, target_case in enumerate(selected_cases, 1):
         print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
-        blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
-            target_case,
-            cases,
-            llm_client,
-            logger,
-            config,
-        )
+        try:
+            blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
+                target_case,
+                cases,
+                llm_client,
+                logger,
+                config,
+            )
+        except Exception as exc:
+            failed_cases += 1
+            print(f"[ERROR] Skipped case {target_case.case_id}: {exc}")
+            logger.log(
+                "case_analysis_errors.jsonl",
+                target_case.case_id,
+                "analyze-cases",
+                {"target_case": target_case},
+                {"error_type": type(exc).__name__, "error": str(exc)},
+            )
+            continue
         blind_user_views.append(blind_view)
         knowledge_artifacts.append(knowledge_artifact)
         debug_artifacts.append(debug_artifact)
+    if not knowledge_artifacts:
+        parser.error(f"All selected cases failed. See: {output_dir / 'case_analysis_errors.jsonl'}")
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
     knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
     debug_path = output_dir / "case_analysis_debug.jsonl"
@@ -196,6 +211,8 @@ def run_analyze_cases(
     print(f"Total knowledge roadmaps: {total_knowledge_artifacts}")
     print(f"Upserted {len(debug_artifacts)} debug artifacts to: {debug_path}")
     print(f"Total debug artifacts: {total_debug_artifacts}")
+    if failed_cases:
+        print(f"Skipped {failed_cases} failed case(s). Errors written to: {output_dir / 'case_analysis_errors.jsonl'}")
 
 
 def run_simulate(
