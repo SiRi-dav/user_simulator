@@ -35,6 +35,11 @@ class RelatedCaseSelection(BaseModel):
     case_id: str
     relation_type: str
     reason: str
+    surface_score: float = 0.0
+    diagnostic_score: float = 0.0
+    solution_score: float = 0.0
+    confusion_score: float = 0.0
+    overall_score: float = 0.0
 
 
 class KnowledgeSpace(BaseModel):

@@ -627,26 +627,31 @@ src/retrieval/related_case_retriever.py
 作用：
 
 ```text
-先从全案例库本地快速召回 top 50 candidate cases，
-再把 target case、queries、top 50 candidates 交给 LLM，
-让 LLM 选择最终 related cases。
+分别按 surface、diagnostic、solution、confusion 四路召回，
+每路融合 BM25 和本地 n-gram 余弦分数，
+合并去重后交给 LLM 做多维打分和排序，
+最后按关系类型覆盖选择 related cases。
 ```
 
 注意：
 
 ```text
-本地快速召回不是最终判断。
-它只负责把 300 万行级别的案例库缩小到几十条候选。
-最终哪些 case 算 related cases，仍然由 LLM 决定。
+各类 query 不会再混成一个 token 集合。
+BM25 负责产品名、错误码和稀有关键词等精确相关性，
+n-gram 余弦负责表达形式相近的软匹配，
+LLM 对 surface、diagnostic、solution、confusion 和 overall 分别打分。
+如果 LLM 返回空结果，程序会保留本地混合检索得分最高的候选作为 fallback。
 ```
 
 这一步可以理解成轻量版“反向 RAG”：
 
 ```text
 target case
-  -> LLM 生成多个检索方向
-  -> 本地检索从全案例库召回 top 50
-  -> LLM 从 top 50 里精选 related cases
+  -> LLM 生成四类检索方向
+  -> 四路 BM25 + n-gram cosine 混合召回
+  -> RRF 融合并去重
+  -> LLM 多维打分重排
+  -> 类型覆盖 Top-K / 空结果 fallback
 ```
 
 related cases 用来构造混淆知识空间，例如：
@@ -661,6 +666,15 @@ solution 操作类似的 case
 
 ```text
 outputs/related_cases.jsonl
+```
+
+该日志会记录：
+
+```text
+每个候选的 route_scores / bm25_scores / semantic_scores
+LLM ranked_cases 及五类分数
+是否触发 fallback
+all -> recall -> ranked -> selected -> final 的漏斗数量
 ```
 
 ### 10.4 人工种子用户行为版本

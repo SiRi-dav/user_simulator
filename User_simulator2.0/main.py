@@ -670,6 +670,12 @@ def build_case_analysis_artifacts(
         logger,
         top_k=int(retrieval_config.get("related_top_k", 5)),
         recall_top_n=int(retrieval_config.get("candidate_top_n", 50)),
+        per_route_top_n=int(retrieval_config.get("per_route_top_n", 12)),
+        rerank_top_n=int(retrieval_config.get("rerank_top_n", 20)),
+        minimum_score=float(retrieval_config.get("minimum_score", 0.35)),
+        fallback_min_cases=int(retrieval_config.get("fallback_min_cases", 2)),
+        bm25_weight=float(retrieval_config.get("bm25_weight", 0.6)),
+        semantic_weight=float(retrieval_config.get("semantic_weight", 0.4)),
     ).retrieve(target_case, queries, all_cases)
     points = PointExtractor(llm_client, logger).extract_points(target_case, related_cases)
     verification = PointVerifier(llm_client, logger).verify_points(target_case, related_cases, points)

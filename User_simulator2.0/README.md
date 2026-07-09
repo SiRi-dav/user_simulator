@@ -273,20 +273,36 @@ Current flow:
 
 ```text
 full case library
-  -> local fast candidate recall top 50
-  -> LLM selects final related cases top 5
+  -> surface / diagnostic / solution / confusion route recall
+  -> BM25 + local n-gram cosine hybrid scoring per route
+  -> reciprocal-rank fusion and deduplication
+  -> LLM semantic scoring and reranking
+  -> relation-diverse top 5, with empty-result fallback
 ```
 
-The local recall step is only candidate narrowing. It does not make the final related-case decision. The final selection is still made by the LLM.
+Queries are not merged into one token bag. Each retrieval direction gets its own candidate list, so a strong surface match cannot hide a useful solution or confusion-path match.
 
-This is close to a reverse-RAG shape: each case is treated as a retrieval document, the target case is converted into several retrieval directions by the LLM, local retrieval recalls likely candidate documents, and the LLM then reranks/selects useful related cases.
+The hybrid recall is fully local: BM25 captures exact product names, error codes, and rare terms, while n-gram cosine captures softer wording overlap. The LLM then assigns surface, diagnostic, solution, confusion, and overall scores. If the LLM returns no candidate above threshold, the strongest hybrid-recall candidates are retained as a configurable fallback.
+
+Retrieval settings are under `retrieval` in `config.yaml`:
+
+```yaml
+candidate_top_n: 50
+per_route_top_n: 12
+related_top_k: 5
+rerank_top_n: 20
+minimum_score: 0.35
+fallback_min_cases: 2
+bm25_weight: 0.6
+semantic_weight: 0.4
+```
 
 ## Outputs
 
 All intermediate results are saved as JSONL records under `outputs/`.
 
 - `generated_queries.jsonl`: reverse RAG retrieval queries
-- `related_cases.jsonl`: locally recalled candidates and LLM selected related cases
+- `related_cases.jsonl`: per-route hybrid scores, LLM rankings, fallback usage, and retrieval funnel counts
 - `points.jsonl`: extracted knowledge points
 - `verified_points.jsonl`: verified and dropped points
 - `relations.jsonl`: point relations

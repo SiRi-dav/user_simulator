@@ -35,7 +35,13 @@ dialogue_fields:
 
 retrieval:
   candidate_top_n: 50
+  per_route_top_n: 12
   related_top_k: 5
+  rerank_top_n: 20
+  minimum_score: 0.35
+  fallback_min_cases: 2
+  bm25_weight: 0.6
+  semantic_weight: 0.4
 
 assistant:
   # manual: type assistant replies in terminal.
