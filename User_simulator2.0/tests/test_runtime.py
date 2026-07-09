@@ -68,13 +68,31 @@ def test_simulator_applies_pending_action_result_state_update():
         llm,
     )
 
-    simulator._apply_state_update({"pending_action_result": True, "last_action_summary": "重启应用"})
+    simulator._apply_state_update(
+        {
+            "pending_action_result": True,
+            "last_action_summary": "重启应用",
+            "pending_action_solution_match": "actionable_but_not_target",
+            "pending_action_result_facts": ["重启后仍显示原错误"],
+        }
+    )
     assert simulator.state.pending_action_result is True
     assert simulator.state.last_action_summary == "重启应用"
+    assert simulator.state.pending_action_solution_match == "actionable_but_not_target"
+    assert simulator.state.pending_action_result_facts == ["重启后仍显示原错误"]
 
-    simulator._apply_state_update({"pending_action_result": False, "last_action_summary": None})
+    simulator._apply_state_update(
+        {
+            "pending_action_result": False,
+            "last_action_summary": None,
+            "pending_action_solution_match": None,
+            "pending_action_result_facts": [],
+        }
+    )
     assert simulator.state.pending_action_result is False
     assert simulator.state.last_action_summary is None
+    assert simulator.state.pending_action_solution_match is None
+    assert simulator.state.pending_action_result_facts == []
 
 
 def test_simulator_initial_reply_uses_blind_view_not_full_roadmap_surface_problem():
@@ -124,6 +142,41 @@ def test_runtime_loads_manual_seed_behavior_assets_when_outputs_missing(tmp_path
         "回答客服并释放信息",
         "询问具体操作办法",
     }
+    assert all(item.decision_rules for item in taxonomy)
+    assert all(item.prohibited_behaviors for item in taxonomy)
+    assert all(item.state_transitions for item in taxonomy)
+
+    resolution_policy = next(item for item in taxonomy if item.behavior_name == "确认解决、继续求助或升级")
+    assert any("solution_match=target" in rule for rule in resolution_policy.decision_rules)
+    assert any("impatient" in rule for rule in resolution_policy.prohibited_behaviors)
+
+    how_to_policy = next(item for item in taxonomy if item.behavior_name == "询问具体操作办法")
+    action_policy = next(item for item in taxonomy if item.behavior_name == "尝试操作并反馈结果")
+    assert any("动作复杂" in rule for rule in how_to_policy.decision_rules)
+    assert any("下一用户回合优先 report_action_result" in rule for rule in action_policy.decision_rules)
+    assert any("pending_action_solution_match" in rule for rule in action_policy.decision_rules)
+
+
+def test_runtime_uses_seed_rules_and_merges_mined_behavior_evidence(tmp_path):
+    output_path = tmp_path / "user_behavior_taxonomy.jsonl"
+    output_path.write_text(
+        '{"behavior_name":"确认解决或继续求助","definition":"旧规则","trigger_assistant_acts":["solution_output"],'
+        '"typical_user_response_patterns":["我先试试看"],"persona_sensitivity":{"cooperative":"low"},'
+        '"simulator_policy_hint":"旧提示","decision_rules":["target 需要等待执行结果"],'
+        '"prohibited_behaviors":["旧禁止项"],"state_transitions":{"old":"old"}}\n',
+        encoding="utf-8",
+    )
+
+    taxonomy = load_behavior_taxonomy(output_path)
+    resolution = next(item for item in taxonomy if item.behavior_name == "确认解决、继续求助或升级")
+
+    assert len(taxonomy) == 6
+    assert resolution.definition != "旧规则"
+    assert "我先试试看" in resolution.typical_user_response_patterns
+    assert resolution.persona_sensitivity["cooperative"] == "low"
+    assert any("solution_match=target" in rule for rule in resolution.decision_rules)
+    assert "target 需要等待执行结果" not in resolution.decision_rules
+    assert "old" not in resolution.state_transitions
 
 
 def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():

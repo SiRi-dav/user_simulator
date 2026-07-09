@@ -95,7 +95,16 @@ For each runtime policy, output:
     "cooperative": "...",
     "vague": "..."
   }},
-  "simulator_policy_hint": "how this behavior should be implemented in the simulator"
+  "simulator_policy_hint": "how this behavior should be implemented in the simulator",
+  "decision_rules": [
+    "observable condition -> preferred user action"
+  ],
+  "prohibited_behaviors": [
+    "behavior that would be unrealistic under this policy"
+  ],
+  "state_transitions": {{
+    "condition": "state fields that should change"
+  }}
 }}
 
 The simulator_policy_hint must explicitly mention information boundaries:
@@ -103,6 +112,19 @@ The simulator_policy_hint must explicitly mention information boundaries:
 - diagnostic information may be released only when the assistant asks a relevant question.
 - solution information must not be volunteered by the user.
 - external/confusing information should only be used to correct or redirect off-track assistant behavior.
+
+The decision rules must make these distinctions explicit:
+- relevant clarification versus repeated/unknown clarification;
+- vague advice versus a concrete executable action;
+- accepting an actionable target solution versus reporting failure for a non-target action;
+- immediately accepting a target solution versus executing a non-target diagnostic action and reporting its diagnostic result on the next turn;
+- impatience in wording versus actual escalation;
+- continuing troubleshooting versus escalation/termination.
+- Escalation must be evidence-driven: use it only when the assistant explicitly cannot continue, confirms a handoff, or repeated no-progress turns have exhausted user-provided information. Never infer escalation solely from an impatient persona.
+- Cooperation means willingness to provide known information and try clear steps. It does not mean inventing facts, accepting vague advice, or claiming success without a target solution match.
+- Any solution_match=target response should be accepted immediately, even if the solution contains actions; target solutions do not enter pending execution verification.
+- For non-target diagnostic actions, a simple action is directly executable, low-risk, and needs no missing path, parameter, permission, or prerequisite. A complex action is multi-step, unfamiliar, risky, permission-dependent, or underspecified.
+- Complex diagnostic actions should trigger a how-to question. Simple diagnostic actions should store the action-observable diagnostic facts and report them on the next user turn.
 
 Return JSON:
 {{
@@ -115,6 +137,7 @@ Requirements:
 - Put fine-grained labels only inside typical_user_response_patterns or simulator_policy_hint if they are useful.
 - Avoid near-duplicate categories.
 - Focus on policies useful for runtime user simulation, not generic dialogue-act taxonomy.
+- Every policy must contain at least two decision_rules and one prohibited_behaviors item.
 Return only JSON."""
 
 DIALOGUE_SUMMARY_SYSTEM = """You are an expert in analyzing one enterprise IT support dialogue.

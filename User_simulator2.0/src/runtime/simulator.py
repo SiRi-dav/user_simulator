@@ -99,6 +99,13 @@ class Simulator:
         if "last_action_summary" in update:
             value = update.get("last_action_summary")
             self.state.last_action_summary = str(value) if value else None
+        if "pending_action_solution_match" in update:
+            value = update.get("pending_action_solution_match")
+            self.state.pending_action_solution_match = str(value) if value else None
+        if "pending_action_result_facts" in update:
+            self.state.pending_action_result_facts = [
+                str(value) for value in (update.get("pending_action_result_facts") or []) if value
+            ]
         if update.get("solution_status"):
             self.state.solution_status = str(update["solution_status"])
         if update.get("should_stop") is not None:

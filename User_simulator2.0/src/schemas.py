@@ -153,6 +153,8 @@ class DialogueState(BaseModel):
     max_how_to_check: int = 1
     pending_action_result: bool = False
     last_action_summary: Optional[str] = None
+    pending_action_solution_match: Optional[str] = None
+    pending_action_result_facts: List[str] = Field(default_factory=list)
     solution_status: str = "not_solved"
     should_stop: bool = False
     stop_reason: Optional[str] = None
@@ -256,6 +258,9 @@ class BehaviorTaxonomy(BaseModel):
     typical_user_response_patterns: List[str]
     persona_sensitivity: Dict[str, str]
     simulator_policy_hint: str
+    decision_rules: List[str] = Field(default_factory=list)
+    prohibited_behaviors: List[str] = Field(default_factory=list)
+    state_transitions: Dict[str, str] = Field(default_factory=dict)
 
 
 class DialogueBehaviorSummary(BaseModel):

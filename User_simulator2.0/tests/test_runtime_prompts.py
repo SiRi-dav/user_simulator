@@ -38,10 +38,30 @@ def test_runtime_prompt_allows_stop_when_assistant_cannot_solve():
     assert "progress_status=\"no_more_user_info\"" in KNOWLEDGE_ASSESSMENT_USER
     assert "stop_no_effective_solution" in BLIND_USER_ACTION_USER
     assert "assistant_unable_to_provide_effective_solution" in BLIND_USER_ACTION_USER
+    assert "selected behavior policy's escalation/termination conditions" in BLIND_USER_ACTION_USER
+
+
+def test_runtime_prompt_accepts_semantically_sufficient_core_solution():
+    assert "semantic sufficiency from a real user's perspective" in KNOWLEDGE_ASSESSMENT_USER
+    assert "Optional checks, fallback branches" in KNOWLEDGE_ASSESSMENT_USER
+    assert "does not cover every solution point" in KNOWLEDGE_ASSESSMENT_USER
+    assert 'For solution_match="partial"' in BLIND_USER_ACTION_USER
+
+
+def test_runtime_prompt_prevents_premature_user_escalation():
+    assert "single behavior policy" in BLIND_USER_ACTION_USER
+    assert "not itself an automatic escalation action" in BLIND_USER_ACTION_USER
+    assert "Do not invent identifiers" in BLIND_USER_ACTION_USER
 
 
 def test_runtime_prompt_requires_action_result_feedback_after_trying_operation():
     assert "report_action_result" in BLIND_USER_ACTION_USER
     assert "pending_action_result" in BLIND_USER_ACTION_USER
+    assert "distinguish simple from complex execution" in BLIND_USER_ACTION_USER
+    assert "pending_action_solution_match" in BLIND_USER_ACTION_USER
+    assert "pending_action_result_facts" in BLIND_USER_ACTION_USER
+    assert 'If solution_match="target"' in BLIND_USER_ACTION_USER
+    assert "immediately even when the solution contains actions" in BLIND_USER_ACTION_USER
+    assert "report pending_action_result_facts" in BLIND_USER_ACTION_USER
     assert "do not repeat \"I'll try it\"" in BLIND_USER_ACTION_USER
-    assert "Clear pending_action_result=false" in BLIND_USER_ACTION_USER
+    assert "state transition after reporting" in BLIND_USER_ACTION_USER

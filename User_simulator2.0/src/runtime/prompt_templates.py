@@ -64,14 +64,21 @@ Progress status must be one of:
 Assessment rules:
 1. If assistant_act is clarification_question, identify which roadmap facts directly answer the latest question.
 2. If assistant_act is action_request, identify whether the requested action is a target solution, an external/wrong path, or merely generic.
-3. If assistant_act is solution_output, compare assistant reply with solution_points and set solution_match.
+   For a non-target diagnostic action, put only the diagnostic facts or user-visible observations that would become known after performing that action into allowed_facts. These facts are candidates for delayed release after execution, not facts the user should reveal before performing the action.
+3. If assistant_act is solution_output or action_request, compare the assistant reply with solution_points and set solution_match.
+   Judge semantic sufficiency from a real user's perspective, not exact wording or exhaustive answer-key coverage:
+   - target: the assistant gives the correct core operation(s) needed to resolve the surface problem, with enough detail for the user to act. Optional checks, fallback branches, registry tweaks, or secondary solution points may be omitted.
+   - partial: the direction is correct and useful but a required step is missing, so the user cannot yet complete the core fix safely.
+   - actionable_but_not_target: the operation is concrete and reasonable to try, but it is a generic diagnostic/fallback or a different solution path.
+   - none: there is no concrete relevant operation.
+   Do not downgrade a sufficient core solution to partial merely because the answer is shorter than the roadmap or does not cover every solution point.
 4. Never put judge-only solution text into allowed_facts unless the assistant has already provided the matching solution.
 5. Do not include facts that are not allowed by the roadmap.
 6. For A/B or category questions, allowed_facts should contain the closest known option, or put the unsupported requested detail into unknown_requested_facts.
 7. Before choosing allowed_facts, identify the focus of the assistant's latest question. allowed_facts should address that focus, not simply reveal another roadmap fact.
 8. If the assistant asks about backend/configuration/process details that a normal user would not know, put those details in unknown_requested_facts.
 9. If the latest assistant question repeats and the roadmap has no new answer, set progress_status="repeated_no_progress" or "no_more_user_info".
-10. If the assistant repeats generic clarification/advice, asks for information already answered, or keeps requesting unknown backend/configuration details, and there is no new relevant user-facing or diagnostic fact to release, set no_more_user_info=true and progress_status="no_more_user_info".
+10. If the assistant repeats generic clarification/advice, asks for information already answered, or keeps requesting unknown backend/configuration details, and there is no new relevant user-facing or diagnostic fact to release, set no_more_user_info=true and progress_status="no_more_user_info". This means the user has no more facts to provide; it does not itself mean the user wants escalation or should abandon the conversation.
 11. Remove case-library artifacts from allowed_facts:
     - no square-bracket labels like 【...】
     - no parenthetical document/category suffixes like （原理图） unless they are necessary user-visible text
@@ -147,6 +154,8 @@ Return JSON:
     "how_to_check_count_delta": 0,
     "pending_action_result": false,
     "last_action_summary": null,
+    "pending_action_solution_match": null,
+    "pending_action_result_facts": [],
     "solution_status": "not_solved | partially_solved | solution_accepted | solved",
     "should_stop": false,
     "stop_reason": null
@@ -154,6 +163,9 @@ Return JSON:
   "reason": "brief explanation"
 }}
 Requirements:
+- First select the single behavior policy whose trigger and simulator_policy_hint best match the latest assistant act, Knowledge Module assessment, dialogue state, and persona. Follow that policy when choosing user_action; use persona only to adjust intensity and wording.
+- In reason, name the selected behavior policy and explain why its trigger applies.
+- Behavior policy controls whether to answer, ask for steps, try an action, report a result, correct the direction, accept, continue, or escalate. Do not replace it with a generic assumption that impatient users always escalate or cooperative users always accept.
 - Use only allowed_facts and unknown_requested_facts from the Knowledge Module assessment.
 - Do not include forbidden_content.
 - Answer the assistant's latest question first. If the assistant asked "which file/type/system?", start with that answer.
@@ -162,19 +174,23 @@ Requirements:
 - Keep the user's goal visible: they want the problem fixed or the next concrete step clarified.
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
 - If the assistant asks about something the user cannot know, choose say_unknown and answer naturally.
-- If the assistant asks the user to do something concrete but the user does not know how, choose ask_how_to_perform.
-- If the assistant gives a concrete operation that the user can reasonably try, and it is not a target solution, you may say you will try it; set pending_action_result=true and briefly store last_action_summary.
+- Do not invent identifiers, error codes, environment details, actions already tried, or technical conclusions that are absent from allowed_facts and dialogue history.
+- If solution_match="target", the assistant has hit the target solution. Choose accept_actionable_solution_and_stop immediately even when the solution contains actions; set solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution". Do not wait for execution verification.
+- For a non-target assistant-requested action, follow the selected behavior policy to distinguish simple from complex execution. When accepting a diagnostic action, save only action-observable allowed_facts into pending_action_result_facts; do not reveal them in the acceptance reply.
 - If Dialogue state has pending_action_result=true, do not repeat "I'll try it" for the same action. Choose report_action_result and report a plausible result based on the Knowledge Module assessment:
-  - If solution_match is not target, say the issue is still present or there is no obvious change, then ask for the next step if needed.
-  - If allowed_facts contain a concrete post-action observation, report that observation.
-  - Clear pending_action_result=false after reporting the result.
-- If the assistant provides an actionable answer and solution_match="target", choose accept_actionable_solution_and_stop; set solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution".
-- If progress_status="no_more_user_info" or no_more_user_info=true and solution_match is not target, choose stop_no_effective_solution; set solution_status="not_solved", should_stop=true, stop_reason="assistant_unable_to_provide_effective_solution". Do not pretend the issue is solved.
+  - Follow the selected behavior policy and report pending_action_result_facts from Dialogue state before handling a new routine question.
+  - Release only those stored diagnostic facts or observations. Do not reveal solution points or unrelated allowed_facts.
+  - If pending_action_result_facts is empty, report only that the action was completed and whether there was an obvious change, according to pending_action_solution_match.
+  - Apply the behavior policy's state transition after reporting.
+- For solution_match="partial", follow the selected behavior policy: ask for the missing operational detail or try the provided part when it is safe and executable.
+- For progress_status="no_more_user_info", follow the behavior policy for unknown/repeated questions. This status means there are no more facts to answer with; it does not by itself require stopping or escalation.
+- Choose stop_no_effective_solution only when the selected behavior policy's escalation/termination conditions are satisfied. Set solution_status="not_solved", should_stop=true, stop_reason="assistant_unable_to_provide_effective_solution". Do not pretend the issue is solved.
 - If the assistant is off-track, correct or redirect while still sounding like a user trying to solve the problem.
 - Use employee persona and behavior policy only to shape wording and reaction style.
 - Do not add facts from employee persona or behavior policy.
 - If persona is low_tech, wording can be less technical and may ask for help if instructed.
 - If persona is impatient, sound slightly impatient when appropriate.
+- Impatience changes the threshold and tone only as described by the selected behavior policy; it is not itself an automatic escalation action.
 - If persona is cooperative, answer directly and politely.
 - If persona is vague, keep details limited.
 - Avoid unnatural punctuation and artifacts:

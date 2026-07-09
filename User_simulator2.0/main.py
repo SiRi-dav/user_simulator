@@ -814,10 +814,32 @@ def load_employee_personas(path: Path) -> list[EmployeePersona]:
 
 def load_behavior_taxonomy(path: Path) -> list[BehaviorTaxonomy]:
     fallback_path = Path(__file__).resolve().parent / "data" / "manual_seed_user_behavior_taxonomy.jsonl"
-    source_path = path if path.exists() else fallback_path
-    if not source_path.exists():
+    if not fallback_path.exists() and not path.exists():
         return []
-    return [BehaviorTaxonomy(**record) for record in read_jsonl(source_path)]
+    if not fallback_path.exists():
+        return [BehaviorTaxonomy(**record) for record in read_jsonl(path)]
+
+    seed_records = read_jsonl(fallback_path)
+    if not path.exists():
+        return [BehaviorTaxonomy(**record) for record in seed_records]
+
+    mined_by_name = {record["behavior_name"]: record for record in read_jsonl(path)}
+    legacy_resolution = mined_by_name.get("确认解决或继续求助")
+    if legacy_resolution and "确认解决、继续求助或升级" not in mined_by_name:
+        mined_by_name["确认解决、继续求助或升级"] = legacy_resolution
+
+    merged_records = []
+    for seed in seed_records:
+        mined = mined_by_name.get(seed["behavior_name"], {})
+        merged = dict(seed)
+        if mined.get("typical_user_response_patterns"):
+            merged["typical_user_response_patterns"] = list(
+                dict.fromkeys(seed["typical_user_response_patterns"] + mined["typical_user_response_patterns"])
+            )
+        if mined.get("persona_sensitivity"):
+            merged["persona_sensitivity"] = {**seed["persona_sensitivity"], **mined["persona_sensitivity"]}
+        merged_records.append(merged)
+    return [BehaviorTaxonomy(**record) for record in merged_records]
 
 
 def select_employee_persona(personas: list[EmployeePersona], persona_id: str | None) -> EmployeePersona | None:
