@@ -382,7 +382,8 @@ def run_simulation_loop(
         if not assistant_text:
             continue
         result = simulator.step(assistant_text)
-        print(f"User: {result['user_reply']}")
+        if str(result.get("user_reply") or "").strip():
+            print(f"User: {result['user_reply']}")
         if simulator.state.should_stop:
             print(f"[STOP: {simulator.state.stop_reason or simulator.state.solution_status}]")
     if not simulator.state.should_stop:

@@ -66,7 +66,8 @@ class Simulator:
         self._apply_state_update(action.state_update)
         self.state.turn_count += 1
         user_reply = action.reply
-        self.dialogue_history.append({"role": "user", "content": user_reply})
+        if user_reply.strip():
+            self.dialogue_history.append({"role": "user", "content": user_reply})
         turn_log = SimulationTurnLog(
             turn=self.state.turn_count,
             assistant_text=assistant_text,

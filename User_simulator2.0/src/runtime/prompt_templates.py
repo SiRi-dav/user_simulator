@@ -191,6 +191,8 @@ Requirements:
 - For solution_match="partial", follow the selected behavior policy: ask for the missing operational detail or try the provided part when it is safe and executable.
 - For progress_status="no_more_user_info", follow the behavior policy for unknown/repeated questions. This status means there are no more facts to answer with; it does not by itself require stopping or escalation.
 - Choose stop_no_effective_solution only when the selected behavior policy's escalation/termination conditions are satisfied. Set solution_status="not_solved", should_stop=true, stop_reason="assistant_unable_to_provide_effective_solution". Do not pretend the issue is solved.
+  In this case, reply may be an empty string when the user's previous turn already stated the blocker or asked for escalation. A real user may simply stop waiting after the assistant cannot provide an executable next step. Do not add a redundant final summary just to end the dialogue.
+- If user_action is accept_actionable_solution_and_stop, keep a short acceptance reply. Empty reply is only allowed for stop_no_effective_solution.
 - If the assistant is off-track, correct or redirect while still sounding like a user trying to solve the problem.
 - Use employee persona and behavior policy only to shape wording and reaction style.
 - Do not add facts from employee persona or behavior policy.

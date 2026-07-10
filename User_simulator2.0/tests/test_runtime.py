@@ -39,6 +39,22 @@ class InitialPromptCaptureLLMClient(MockLLMClient):
         return super().generate_json(system_prompt, user_prompt, schema_name, temperature)
 
 
+class SilentStopLLMClient(MockLLMClient):
+    def generate_json(self, system_prompt, user_prompt, schema_name=None, temperature=0.2):
+        if schema_name == "BlindUserAction":
+            return {
+                "user_action": "stop_no_effective_solution",
+                "reply": "",
+                "state_update": {
+                    "solution_status": "not_solved",
+                    "should_stop": True,
+                    "stop_reason": "assistant_unable_to_provide_effective_solution",
+                },
+                "reason": "no executable next step",
+            }
+        return super().generate_json(system_prompt, user_prompt, schema_name, temperature)
+
+
 def test_runtime_step_solved_sets_should_stop():
     llm = MockLLMClient()
     target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
@@ -93,6 +109,25 @@ def test_simulator_applies_pending_action_result_state_update():
     assert simulator.state.last_action_summary is None
     assert simulator.state.pending_action_solution_match is None
     assert simulator.state.pending_action_result_facts == []
+
+
+def test_simulator_allows_silent_stop_without_appending_empty_user_reply():
+    llm = SilentStopLLMClient()
+    target = Case(case_id="CASE_001", title="加域失败", phenomenon="加域失败", solution="后台处理")
+    roadmap = RoadmapBuilder(llm).build_roadmap(target, [], [])
+    simulator = Simulator(
+        build_blind_user_runtime_view(build_blind_user_view(roadmap)),
+        build_runtime_roadmap(roadmap),
+        {"name": "low_tech"},
+        llm,
+    )
+    simulator.start()
+    result = simulator.step("需要管理员账号和密码执行 netdom join。")
+
+    assert result["user_reply"] == ""
+    assert simulator.state.should_stop is True
+    assert simulator.state.stop_reason == "assistant_unable_to_provide_effective_solution"
+    assert simulator.dialogue_history[-1]["role"] == "assistant"
 
 
 def test_simulator_initial_reply_uses_blind_view_not_full_roadmap_surface_problem():
