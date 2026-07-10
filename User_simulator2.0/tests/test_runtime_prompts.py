@@ -48,6 +48,13 @@ def test_runtime_prompt_accepts_semantically_sufficient_core_solution():
     assert 'For solution_match="partial"' in BLIND_USER_ACTION_USER
 
 
+def test_runtime_prompt_prioritizes_solution_match_over_action_request():
+    assert "Always perform solution matching first" in KNOWLEDGE_ASSESSMENT_USER
+    assert "A reply classified as action_request can still be a target solution" in KNOWLEDGE_ASSESSMENT_USER
+    assert "Target solution overrides action_request" in KNOWLEDGE_ASSESSMENT_USER
+    assert "mixed or numbered assistant reply" in KNOWLEDGE_ASSESSMENT_USER
+
+
 def test_runtime_prompt_prevents_premature_user_escalation():
     assert "single behavior policy" in BLIND_USER_ACTION_USER
     assert "not itself an automatic escalation action" in BLIND_USER_ACTION_USER

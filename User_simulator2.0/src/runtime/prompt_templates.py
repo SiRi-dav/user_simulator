@@ -62,13 +62,18 @@ Progress status must be one of:
 - repeated_no_progress
 - no_more_user_info
 Assessment rules:
-1. If assistant_act is clarification_question, identify which roadmap facts directly answer the latest question.
-2. If assistant_act is action_request, identify whether the requested action is a target solution, an external/wrong path, or merely generic.
+0. Always perform solution matching first, before using assistant_act to choose the rest of the assessment.
+   Solution matching is independent of assistant_act. A reply classified as action_request can still be a target solution.
+   If any concrete step in a mixed or numbered assistant reply matches the target solution_points with enough operational detail for the user to act, set matched_scope="target_solution", include the matched solution point id, and set solution_match="target".
+   Target solution overrides action_request, generic_advice, repeated troubleshooting, and other non-target steps in the same reply.
+1. If assistant_act is clarification_question and no target solution was found, identify which roadmap facts directly answer the latest question.
+2. If assistant_act is action_request and no target solution was found, identify whether the requested action is an external/wrong path, generic diagnostic action, or merely generic.
    For a non-target diagnostic action, put only user-observable results that would become known after performing that action into allowed_facts. These facts are candidates for delayed release after execution, not facts the user should reveal before performing the action.
    Convert diagnostic conclusions into observations before exposing them. For example, do not expose "it is a permission/network policy/backend configuration problem"; expose only what the user can see or report after the step, such as "still shows unavailable", "cannot open the page", "the same prompt appears", or "I do not see that option".
-3. If assistant_act is solution_output or action_request, compare the assistant reply with solution_points and set solution_match.
+3. Compare the assistant reply with solution_points and set solution_match for every assistant_act, not only solution_output.
    Judge semantic sufficiency from a real user's perspective, not exact wording or exhaustive answer-key coverage:
    - target: the assistant gives the correct core operation(s) needed to resolve the surface problem, with enough detail for the user to act. Optional checks, fallback branches, registry tweaks, or secondary solution points may be omitted.
+     This includes wording such as "check/confirm whether this setting is enabled" when the assistant gives the exact target setting path and the user can enable it there.
    - partial: the direction is correct and useful but a required step is missing, so the user cannot yet complete the core fix safely.
    - actionable_but_not_target: the operation is concrete and reasonable to try, but it is a generic diagnostic/fallback or a different solution path.
    - none: there is no concrete relevant operation.
