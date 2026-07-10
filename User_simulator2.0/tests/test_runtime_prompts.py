@@ -65,3 +65,11 @@ def test_runtime_prompt_requires_action_result_feedback_after_trying_operation()
     assert "report pending_action_result_facts" in BLIND_USER_ACTION_USER
     assert "do not repeat \"I'll try it\"" in BLIND_USER_ACTION_USER
     assert "state transition after reporting" in BLIND_USER_ACTION_USER
+
+
+def test_runtime_prompt_prevents_diagnostic_conclusion_leakage():
+    assert "Convert diagnostic conclusions into observations" in KNOWLEDGE_ASSESSMENT_USER
+    assert "Allowed_facts are user-sayable facts, not answer-key diagnoses" in KNOWLEDGE_ASSESSMENT_USER
+    assert "Correction is not diagnosis" in BLIND_USER_ACTION_USER
+    assert "Do not say root-cause conclusions" in BLIND_USER_ACTION_USER
+    assert "root-cause conclusions" in BLIND_USER_ACTION_USER

@@ -64,7 +64,8 @@ Progress status must be one of:
 Assessment rules:
 1. If assistant_act is clarification_question, identify which roadmap facts directly answer the latest question.
 2. If assistant_act is action_request, identify whether the requested action is a target solution, an external/wrong path, or merely generic.
-   For a non-target diagnostic action, put only the diagnostic facts or user-visible observations that would become known after performing that action into allowed_facts. These facts are candidates for delayed release after execution, not facts the user should reveal before performing the action.
+   For a non-target diagnostic action, put only user-observable results that would become known after performing that action into allowed_facts. These facts are candidates for delayed release after execution, not facts the user should reveal before performing the action.
+   Convert diagnostic conclusions into observations before exposing them. For example, do not expose "it is a permission/network policy/backend configuration problem"; expose only what the user can see or report after the step, such as "still shows unavailable", "cannot open the page", "the same prompt appears", or "I do not see that option".
 3. If assistant_act is solution_output or action_request, compare the assistant reply with solution_points and set solution_match.
    Judge semantic sufficiency from a real user's perspective, not exact wording or exhaustive answer-key coverage:
    - target: the assistant gives the correct core operation(s) needed to resolve the surface problem, with enough detail for the user to act. Optional checks, fallback branches, registry tweaks, or secondary solution points may be omitted.
@@ -74,6 +75,8 @@ Assessment rules:
    Do not downgrade a sufficient core solution to partial merely because the answer is shorter than the roadmap or does not cover every solution point.
 4. Never put judge-only solution text into allowed_facts unless the assistant has already provided the matching solution.
 5. Do not include facts that are not allowed by the roadmap.
+   Allowed_facts are user-sayable facts, not answer-key diagnoses. Even when the roadmap contains diagnostic_points, allowed_facts must be phrased as the user's direct observation, prior action, visible error, environment, or answer to the assistant's exact question.
+   Do not expose root-cause labels, ownership labels, backend/process judgments, or solution-like conclusions as user speech. Put unsupported backend/root-cause details into unknown_requested_facts or keep them out of allowed_facts.
 6. For A/B or category questions, allowed_facts should contain the closest known option, or put the unsupported requested detail into unknown_requested_facts.
 7. Before choosing allowed_facts, identify the focus of the assistant's latest question. allowed_facts should address that focus, not simply reveal another roadmap fact.
 8. If the assistant asks about backend/configuration/process details that a normal user would not know, put those details in unknown_requested_facts.
@@ -84,6 +87,7 @@ Assessment rules:
     - no parenthetical document/category suffixes like （原理图） unless they are necessary user-visible text
     - no case_id, point_id, "source", "roadmap", "diagnostic point", or "solution point"
     - no raw copied titles; convert them to natural wording
+12. For correction/redirection, the user may reject a wrong assumption only with observable evidence. Do not make the user say the correct diagnosis. Prefer "我这边不是这个表现/我试了还是这样/我没有这个入口" over "这是权限问题/配置问题/后台策略问题".
 Return JSON:
 {{
   "assistant_act": "...",
@@ -175,11 +179,13 @@ Requirements:
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
 - If the assistant asks about something the user cannot know, choose say_unknown and answer naturally.
 - Do not invent identifiers, error codes, environment details, actions already tried, or technical conclusions that are absent from allowed_facts and dialogue history.
+- Even when allowed_facts contain diagnostic clues, phrase the reply as a user's observation, not as the answer. Do not say root-cause conclusions such as "这是权限问题", "是后台配置问题", "不是网络问题", "系统限制了这个应用", or "需要管理员开权限" unless the assistant has already stated that exact conclusion and the user is merely acknowledging it.
+- Correction is not diagnosis. When redirecting an off-track assistant, say what you observed or what failed, then ask for the next step. Do not reveal the hidden cause or final handling path.
 - If solution_match="target", the assistant has hit the target solution. Choose accept_actionable_solution_and_stop immediately even when the solution contains actions; set solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution". Do not wait for execution verification.
 - For a non-target assistant-requested action, follow the selected behavior policy to distinguish simple from complex execution. When accepting a diagnostic action, save only action-observable allowed_facts into pending_action_result_facts; do not reveal them in the acceptance reply.
 - If Dialogue state has pending_action_result=true, do not repeat "I'll try it" for the same action. Choose report_action_result and report a plausible result based on the Knowledge Module assessment:
   - Follow the selected behavior policy and report pending_action_result_facts from Dialogue state before handling a new routine question.
-  - Release only those stored diagnostic facts or observations. Do not reveal solution points or unrelated allowed_facts.
+  - Release only those stored action-observable facts or observations. Do not reveal solution points, root-cause conclusions, or unrelated allowed_facts.
   - If pending_action_result_facts is empty, report only that the action was completed and whether there was an obvious change, according to pending_action_solution_match.
   - Apply the behavior policy's state transition after reporting.
 - For solution_match="partial", follow the selected behavior policy: ask for the missing operational detail or try the provided part when it is safe and executable.
