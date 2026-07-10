@@ -37,6 +37,40 @@ class TranscriptExporter:
             paths.extend(self.write_transcript(build_transcript(case_id, logs_by_case[case_id])))
         return paths
 
+    def export_combined(self, case_ids: Iterable[str] | None = None, stem: str = "all_simulation_transcripts") -> list[Path]:
+        transcripts = self.build_all_transcripts(case_ids)
+        if not transcripts:
+            raise ValueError("No simulation logs found for selected cases.")
+        self.transcript_dir.mkdir(parents=True, exist_ok=True)
+        safe_stem = safe_filename(stem or "all_simulation_transcripts")
+        md_path = self.transcript_dir / f"{safe_stem}.md"
+        json_path = self.transcript_dir / f"{safe_stem}.json"
+        md_path.write_text(render_combined_transcript_markdown(transcripts), encoding="utf-8")
+        json_path.write_text(json.dumps(transcripts, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return [md_path, json_path]
+
+    def build_all_transcripts(self, case_ids: Iterable[str] | None = None) -> list[Dict[str, Any]]:
+        selected = set(case_ids or [])
+        logs_by_case: dict[str, list[Dict[str, Any]]] = {}
+        for record in read_simulation_logs(self.output_dir / "simulation_logs.jsonl"):
+            case_id = record["case_id"]
+            if selected and case_id not in selected:
+                continue
+            logs_by_case.setdefault(case_id, []).append(record)
+        if selected:
+            missing = sorted(selected - set(logs_by_case))
+            if missing:
+                raise ValueError(f"case_id not found in simulation_logs.jsonl: {', '.join(missing)}")
+        transcripts: list[Dict[str, Any]] = []
+        for case_id in sorted(logs_by_case):
+            sessions = split_logs_into_sessions(logs_by_case[case_id])
+            for session_index, session in enumerate(sessions, 1):
+                transcript = build_transcript(case_id, session)
+                transcript["session_index"] = session_index
+                transcript["session_id"] = f"{case_id}#{session_index}"
+                transcripts.append(transcript)
+        return transcripts
+
     def write_transcript(self, transcript: Dict[str, Any]) -> list[Path]:
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
         case_id = str(transcript["case_id"])
@@ -87,6 +121,23 @@ def build_transcript(case_id: str, logs: list[Dict[str, Any]]) -> Dict[str, Any]
     }
 
 
+def split_logs_into_sessions(logs: list[Dict[str, Any]]) -> list[list[Dict[str, Any]]]:
+    sessions: list[list[Dict[str, Any]]] = []
+    current: list[Dict[str, Any]] = []
+    previous_turn = 0
+    ordered = sorted(enumerate(logs), key=lambda item: (str(item[1].get("timestamp") or ""), item[0]))
+    for _, record in ordered:
+        turn = int((record.get("output") or {}).get("turn") or 0)
+        if current and (turn <= previous_turn or turn == 1):
+            sessions.append(current)
+            current = []
+        current.append(record)
+        previous_turn = turn
+    if current:
+        sessions.append(current)
+    return sessions
+
+
 def add_message(messages: list[Dict[str, Any]], role: Any, content: Any, turn: int) -> None:
     role_text = str(role or "").strip()
     content_text = str(content or "").strip()
@@ -114,4 +165,33 @@ def render_transcript_markdown(transcript: Dict[str, Any]) -> str:
         content = str(message.get("content") or "")
         lines.append(f"**{role}:** {content}")
         lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_combined_transcript_markdown(transcripts: list[Dict[str, Any]]) -> str:
+    lines = [
+        "# All Simulation Transcripts",
+        "",
+        f"- session_count: {len(transcripts)}",
+        "",
+    ]
+    for transcript in transcripts:
+        session_id = transcript.get("session_id") or transcript.get("case_id")
+        lines.extend(
+            [
+                f"## {session_id}",
+                "",
+                f"- case_id: {transcript.get('case_id', '')}",
+                f"- session_index: {transcript.get('session_index', '')}",
+                f"- turn_count: {transcript.get('turn_count', '')}",
+                f"- solution_status: {transcript.get('solution_status', '')}",
+                f"- stop_reason: {transcript.get('stop_reason', '')}",
+                "",
+            ]
+        )
+        for message in transcript.get("messages", []):
+            role = str(message.get("role") or "").capitalize()
+            content = str(message.get("content") or "")
+            lines.append(f"**{role}:** {content}")
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
