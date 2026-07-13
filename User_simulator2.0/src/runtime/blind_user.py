@@ -63,6 +63,7 @@ class BlindUser:
             employee_persona_json=dumps_json(employee_persona or {}),
             behavior_policy_json=dumps_json(model_to_dict(behavior_policy)),
             knowledge_assessment_json=dumps_json(assessment_json),
+            action_execution_feedback_json=dumps_json(build_action_execution_feedback(state)),
             state_json=dumps_json(model_to_dict(state) if state else {}),
             dialogue_history_json=dumps_json(dialogue_history),
         )
@@ -78,3 +79,18 @@ def sanitize_forbidden_content_for_blind_user(forbidden_content: Any) -> List[st
     if not forbidden_content:
         return []
     return ["hidden_solution_or_case_details"]
+
+
+def build_action_execution_feedback(state: DialogueState | None) -> Dict[str, Any]:
+    if not state or not state.pending_action_result:
+        return {"has_pending_result": False}
+    return {
+        "has_pending_result": True,
+        "executed_action": state.last_action_summary,
+        "action_solution_match": state.pending_action_solution_match,
+        "observations": list(state.pending_action_result_facts),
+        "usage_policy": (
+            "This is world-model feedback produced after the user executed the previous assistant-requested action. "
+            "Consider it before ordinary new facts, then combine it with the latest assistant reply and the behavior policy."
+        ),
+    }

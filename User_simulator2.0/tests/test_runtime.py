@@ -9,7 +9,7 @@ from src.llm.mock_llm_client import MockLLMClient
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.blind_user import BlindUser
 from src.runtime.simulator import Simulator
-from src.schemas import BlindUserCaseView, Case, KnowledgeAssessment
+from src.schemas import BlindUserCaseView, Case, DialogueState, KnowledgeAssessment
 
 
 class PromptCaptureLLMClient(MockLLMClient):
@@ -187,9 +187,15 @@ def test_runtime_loads_manual_seed_behavior_assets_when_outputs_missing(tmp_path
 
     how_to_policy = next(item for item in taxonomy if item.behavior_name == "询问具体操作办法")
     action_policy = next(item for item in taxonomy if item.behavior_name == "尝试操作并反馈结果")
+    opening_policy = next(item for item in taxonomy if item.behavior_name == "陈述或继续澄清问题")
     assert any("动作复杂" in rule for rule in how_to_policy.decision_rules)
-    assert any("下一用户回合优先 report_action_result" in rule for rule in action_policy.decision_rules)
+    assert any("action_execution_feedback.has_pending_result=true" in rule for rule in action_policy.decision_rules)
+    assert any("不强制选择 report_action_result" in rule for rule in action_policy.decision_rules)
     assert any("pending_action_solution_match" in rule for rule in action_policy.decision_rules)
+    assert "默认一句话" in opening_policy.simulator_policy_hint
+    assert any("不复盘全部历史" in rule for rule in opening_policy.decision_rules)
+    assert any("后台" in rule for rule in opening_policy.decision_rules)
+    assert any("长篇复盘" in item for item in action_policy.prohibited_behaviors)
 
 
 def test_runtime_uses_seed_rules_and_merges_mined_behavior_evidence(tmp_path):
@@ -235,3 +241,42 @@ def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():
     assert "结束 Outlook 残留进程后重新打开" not in llm.last_user_prompt
     assert "CASE_001" not in llm.last_user_prompt
     assert "hidden_solution_or_case_details" in llm.last_user_prompt
+
+
+def test_blind_user_action_prompt_exposes_action_execution_feedback():
+    llm = PromptCaptureLLMClient()
+    assessment = KnowledgeAssessment(
+        assistant_act="clarification_question",
+        matched_scope="case_internal",
+        matched_point_ids=[],
+        allowed_facts=["当前仍不可用"],
+        unknown_requested_facts=[],
+        forbidden_content=[],
+        solution_match="none",
+        progress_status="new_progress",
+        no_more_user_info=False,
+        state_update={},
+        reason="test",
+    )
+    state = DialogueState(
+        pending_action_result=True,
+        last_action_summary="重启 Outlook",
+        pending_action_solution_match="actionable_but_not_target",
+        pending_action_result_facts=["重启后还是看不到新邮件提醒"],
+    )
+
+    BlindUser(llm).choose_action_and_reply(
+        assessment,
+        {"name": "low_tech"},
+        None,
+        [],
+        "Outlook 没有新邮件提醒",
+        [],
+        state,
+    )
+
+    assert "Action execution feedback" in llm.last_user_prompt
+    assert '"has_pending_result": true' in llm.last_user_prompt
+    assert "重启 Outlook" in llm.last_user_prompt
+    assert "重启后还是看不到新邮件提醒" in llm.last_user_prompt
+    assert "world-model feedback" in llm.last_user_prompt

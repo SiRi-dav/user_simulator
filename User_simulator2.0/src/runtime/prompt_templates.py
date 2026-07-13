@@ -126,7 +126,8 @@ Important:
 - Do not mention that you are a simulator.
 - Do not copy case-library wording mechanically.
 - Do not include bracketed labels, point labels, document-category parentheses, or debug-style wording.
-- Keep the reply short and natural.
+- Keep the reply short and natural. Default to one sentence; use at most two short sentences unless reporting a concrete action result.
+- Avoid template escalation phrases such as "转后台专家", "创建工单", "尽快处理", or "升级处理" unless the assistant has explicitly offered handoff or the selected behavior policy's termination condition is satisfied.
 - Match the persona."""
 
 BLIND_USER_ACTION_USER = """Surface problem:
@@ -139,6 +140,8 @@ Behavior policy:
 {behavior_policy_json}
 Knowledge Module assessment:
 {knowledge_assessment_json}
+Action execution feedback:
+{action_execution_feedback_json}
 Dialogue state:
 {state_json}
 Dialogue history:
@@ -181,6 +184,9 @@ Requirements:
 - If the assistant asks several questions at once, answer one natural part that matches allowed_facts or unknown_requested_facts. Do not answer with an unrelated known fact.
 - Do not simply repeat the previous user message unless the assistant explicitly asks you to repeat it.
 - Keep the user's goal visible: they want the problem fixed or the next concrete step clarified.
+- Keep normal replies to one sentence, at most two short sentences. Do not summarize the whole case or list every attempt unless the assistant specifically asks for a history.
+- Short reply style examples: "好的，我去试试。", "这个我不清楚，怎么查看？", "我试了还是一样，下一步怎么处理？", "好的，谢谢。"
+- Do not repeatedly ask for "后台专家", "创建工单", "尽快处理", "升级处理", or "转人工". Use those only after the assistant clearly cannot provide an executable next step, has offered handoff, or the selected behavior policy says to stop.
 - If the assistant asks a relevant question, answer in a way that helps move troubleshooting forward.
 - If the assistant asks about something the user cannot know, choose say_unknown and answer naturally.
 - Do not invent identifiers, error codes, environment details, actions already tried, or technical conclusions that are absent from allowed_facts and dialogue history.
@@ -188,15 +194,17 @@ Requirements:
 - Correction is not diagnosis. When redirecting an off-track assistant, say what you observed or what failed, then ask for the next step. Do not reveal the hidden cause or final handling path.
 - If solution_match="target", the assistant has hit the target solution. Choose accept_actionable_solution_and_stop immediately even when the solution contains actions; set solution_status="solution_accepted", should_stop=true, stop_reason="accepted_actionable_solution". Do not wait for execution verification.
 - For a non-target assistant-requested action, follow the selected behavior policy to distinguish simple from complex execution. When accepting a diagnostic action, save only action-observable allowed_facts into pending_action_result_facts; do not reveal them in the acceptance reply.
-- If Dialogue state has pending_action_result=true, do not repeat "I'll try it" for the same action. Choose report_action_result and report a plausible result based on the Knowledge Module assessment:
-  - Follow the selected behavior policy and report pending_action_result_facts from Dialogue state before handling a new routine question.
-  - Release only those stored action-observable facts or observations. Do not reveal solution points, root-cause conclusions, or unrelated allowed_facts.
-  - If pending_action_result_facts is empty, report only that the action was completed and whether there was an obvious change, according to pending_action_solution_match.
-  - Apply the behavior policy's state transition after reporting.
+- If Action execution feedback has has_pending_result=true, treat it as the world model's feedback after the user executed the previous action. Consider this feedback before ordinary new facts, then combine it with the latest assistant reply, Knowledge Module assessment, and behavior policy to choose the next action.
+  - Usually mention the execution observation in the next reply, but do not force report_action_result if the latest assistant reply has already provided a target solution, asks a more specific relevant follow-up, or makes the result naturally part of another action such as answer_question, ask_how_to_perform, or correct_or_redirect.
+  - Do not repeat "I'll try it" for the same action.
+  - Release only the action-observable feedback from Action execution feedback. Do not reveal solution points, root-cause conclusions, or unrelated allowed_facts.
+  - If observations are empty, use only a generic result such as "我试了，没有明显变化" when the reply needs to mention the execution.
+  - If the reply uses the execution feedback, clear pending_action_result, last_action_summary, pending_action_solution_match, and pending_action_result_facts in state_update. If the feedback is deliberately deferred because the latest assistant reply must be answered first, keep pending_action_result=true.
 - For solution_match="partial", follow the selected behavior policy: ask for the missing operational detail or try the provided part when it is safe and executable.
 - For progress_status="no_more_user_info", follow the behavior policy for unknown/repeated questions. This status means there are no more facts to answer with; it does not by itself require stopping or escalation.
 - Choose stop_no_effective_solution only when the selected behavior policy's escalation/termination conditions are satisfied. Set solution_status="not_solved", should_stop=true, stop_reason="assistant_unable_to_provide_effective_solution". Do not pretend the issue is solved.
   In this case, reply may be an empty string when the user's previous turn already stated the blocker or asked for escalation. A real user may simply stop waiting after the assistant cannot provide an executable next step. Do not add a redundant final summary just to end the dialogue.
+- If stop_no_effective_solution needs a non-empty reply, keep it to one short blocker statement, not a recap of the conversation.
 - If user_action is accept_actionable_solution_and_stop, keep a short acceptance reply. Empty reply is only allowed for stop_no_effective_solution.
 - If the assistant is off-track, correct or redirect while still sounding like a user trying to solve the problem.
 - Use employee persona and behavior policy only to shape wording and reaction style.

@@ -241,6 +241,12 @@ CASE_yyy    另一个案例标题
 python3 main.py analyze-cases --limit 20
 ```
 
+大批量分析时可以开 case 级并发。比如 500 条可以先从 4 或 8 开始试：
+
+```bash
+python3 main.py analyze-cases --case_ids_file outputs/real_dialogue_case_ids_500.txt --workers 8
+```
+
 换下一批 20 个 case：
 
 ```bash
@@ -967,7 +973,7 @@ stop_no_effective_solution
 continue
 ```
 
-其中 `report_action_result` 用来处理“上一轮用户已经接受/尝试了一个操作方案”的情况。也就是说，用户说过“好的，我去试试看”之后，下一轮不会继续重复“我去试试”，而是优先反馈尝试结果，例如“试了还是一样”“没看到变化”“按这个操作后还是打不开”。
+其中 `report_action_result` 用来处理“上一轮用户已经接受/尝试了一个操作方案”的情况。用户说过“好的，我去试试看”之后，系统会先把执行动作得到的世界反馈写入 `action_execution_feedback`，例如“试了还是一样”“没看到变化”“按这个操作后还是打不开”。行为层下一轮会优先考虑这份反馈，但不是固定强制选择 `report_action_result`：如果 assistant 最新回复已经命中 target solution、提出更具体的相关追问，或需要纠偏，用户会把执行反馈和新信息综合后选择更合适的回复。
 
 每轮日志输出：
 
@@ -1114,22 +1120,84 @@ outputs/simulator_eval/<case_id>.md
 Behavioral Realism:
   - user turn count / 话语长度的 Wasserstein 距离
   - 用户 dialogue act 分布的 Jensen-Shannon 散度
-  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应；开启 --judge 后由 LLM 语义判断
+  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应
+  - 开启 --judge 后，LLM judge 分数与规则分融合，而不是直接覆盖
 
 Goal Alignment:
   - goal_persistence_score: 用户是否跑题
   - knowledge_boundary_score: 是否泄露 solution 或外部 case 信息
   - simulated_solved_rate: 模拟对话是否能围绕目标 case 走到解决/接受
+  - trajectory_state_score: 是否命中 target solution、是否正确接受、是否出现知识泄漏
   - 开启 --judge 后，LLM 额外判断用户是否真的保持目标一致、是否像偷看答案
 
 Overly Cooperative:
   - simulated_accept_rate 是否明显高于真实用户
   - simulated_resistance_rate 是否明显低于真实用户
   - resistance 包括拒绝、追问、困惑、不满等真实用户常见阻力
+  - trajectory_overcooperation_penalty: 惩罚错误接受、重复说去试但没有反馈等过度配合轨迹
   - 开启 --judge 后，LLM 判断是否存在过度配合、过早接受、缺少真实阻力
+
+Trajectory State:
+  - target_solution_hit_rate: assistant 是否实际触达目标方案
+  - accepted_target_rate: 用户是否在 target 命中后合理接受
+  - wrong_acceptance_rate: 用户是否接受了非 target / 无效方案
+  - knowledge_leakage_rate: 用户是否泄露 solution 或 forbidden content
+  - action_feedback_use_rate: 用户是否使用了动作执行后的 observation
+  - repeated_try_without_feedback_rate: 是否机械重复“我去试试”但没有反馈结果
 ```
 
-规则版适合作为第一层自动回归和筛 bad case。`--judge` 版会调用配置里的 LLM，对 USI、目标一致性、过度合作做语义评审；JSD、Wasserstein 这类统计分布指标仍然由规则计算。
+规则版适合作为第一层自动回归和筛 bad case。`--judge` 版会调用配置里的 LLM，对真实度、目标一致性、过度合作做语义评审；最终分数会融合规则分、LLM judge 和 trajectory/state 检查，避免单纯依赖 judge 感觉分。
+
+### 14.4 额外 τ²-bench-style 双控制评测
+
+如果要单独跑一个更接近 τ²-bench 的评测，不走 `main.py`，用独立脚本：
+
+```bash
+python3 scripts/evaluate_tau2_style.py --case-ids-file outputs/real_dialogue_case_ids.txt
+```
+
+也可以只评一个 case：
+
+```bash
+python3 scripts/evaluate_tau2_style.py --case-id KT00116480
+```
+
+输出位置：
+
+```text
+outputs/tau2_eval/summary.md
+outputs/tau2_eval/tau2_eval.jsonl
+outputs/tau2_eval/<case_id>.md
+```
+
+这个模块照搬 τ²-bench 的评测结构做 proxy 映射：
+
+```text
+Dual-control setting:
+  - assistant 通过语言指导用户动作
+  - user 执行动作后产生 action_execution_feedback
+  - 最终根据共享轨迹和 proxy state 判断任务是否成功
+
+State / assertion:
+  - assertion_pass: target solution 是否命中并被正确接受，且没有知识泄漏
+  - action_matching_score: 轨迹中是否出现 target solution 对应的 action / point
+  - communication_info_score: assistant 是否成功 elicited target route 所需用户信息
+  - dual_control_coordination_score: assistant 要求用户执行动作后，用户是否反馈 observation
+
+Reliability:
+  - pass_hat_1: 同一 case 的模拟 session 成功率
+  - pass_hat_k_all: 同一 case 的所有 session 是否都成功
+
+Failure diagnosis:
+  - assistant_reasoning_or_retrieval_failure
+  - dual_control_coordination_failure
+  - action_feedback_failure
+  - false_success_or_overcooperation
+  - user_simulator_leakage
+  - termination_or_acceptance_failure
+```
+
+注意：我们没有 τ²-bench 那样的真实工具数据库，所以这里是 **tau2-style proxy evaluation**。它使用 `knowledge_roadmaps.jsonl`、`simulation_logs.jsonl`、Knowledge Module assessment 和 simulator state 来近似论文里的 world state、assertion functions 和 action matching。
 
 ## 15. 最推荐的完整命令顺序
 

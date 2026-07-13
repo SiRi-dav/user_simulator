@@ -1,4 +1,9 @@
-from src.runtime.prompt_templates import BLIND_USER_ACTION_USER, INITIAL_USER_USER, KNOWLEDGE_ASSESSMENT_USER
+from src.runtime.prompt_templates import (
+    BLIND_USER_ACTION_SYSTEM,
+    BLIND_USER_ACTION_USER,
+    INITIAL_USER_USER,
+    KNOWLEDGE_ASSESSMENT_USER,
+)
 
 
 def test_runtime_prompts_prioritize_answering_latest_question_naturally():
@@ -69,9 +74,10 @@ def test_runtime_prompt_requires_action_result_feedback_after_trying_operation()
     assert "pending_action_result_facts" in BLIND_USER_ACTION_USER
     assert 'If solution_match="target"' in BLIND_USER_ACTION_USER
     assert "immediately even when the solution contains actions" in BLIND_USER_ACTION_USER
-    assert "report pending_action_result_facts" in BLIND_USER_ACTION_USER
-    assert "do not repeat \"I'll try it\"" in BLIND_USER_ACTION_USER
-    assert "state transition after reporting" in BLIND_USER_ACTION_USER
+    assert "Action execution feedback" in BLIND_USER_ACTION_USER
+    assert "world model's feedback" in BLIND_USER_ACTION_USER
+    assert "do not force report_action_result" in BLIND_USER_ACTION_USER
+    assert "clear pending_action_result" in BLIND_USER_ACTION_USER
 
 
 def test_runtime_prompt_prevents_diagnostic_conclusion_leakage():
@@ -80,3 +86,16 @@ def test_runtime_prompt_prevents_diagnostic_conclusion_leakage():
     assert "Correction is not diagnosis" in BLIND_USER_ACTION_USER
     assert "Do not say root-cause conclusions" in BLIND_USER_ACTION_USER
     assert "root-cause conclusions" in BLIND_USER_ACTION_USER
+
+
+def test_runtime_prompt_requires_concise_non_template_user_replies():
+    assert "Default to one sentence" in BLIND_USER_ACTION_SYSTEM
+    assert "Keep normal replies to one sentence" in BLIND_USER_ACTION_USER
+    assert "at most two short sentences" in BLIND_USER_ACTION_USER
+    assert "Do not summarize the whole case" in BLIND_USER_ACTION_USER
+    assert "Short reply style examples" in BLIND_USER_ACTION_USER
+    assert "转后台专家" in BLIND_USER_ACTION_SYSTEM
+    assert "后台专家" in BLIND_USER_ACTION_USER
+    assert "创建工单" in BLIND_USER_ACTION_USER
+    assert "Do not repeatedly ask" in BLIND_USER_ACTION_USER
+    assert "one short blocker statement" in BLIND_USER_ACTION_USER

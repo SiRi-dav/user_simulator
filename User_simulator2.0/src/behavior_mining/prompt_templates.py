@@ -117,14 +117,14 @@ The decision rules must make these distinctions explicit:
 - relevant clarification versus repeated/unknown clarification;
 - vague advice versus a concrete executable action;
 - accepting an actionable target solution versus reporting failure for a non-target action;
-- immediately accepting a target solution versus executing a non-target diagnostic action and reporting its diagnostic result on the next turn;
+- immediately accepting a target solution versus executing a non-target diagnostic action and using the resulting world-model feedback in the next decision;
 - impatience in wording versus actual escalation;
 - continuing troubleshooting versus escalation/termination.
 - Escalation must be evidence-driven: use it only when the assistant explicitly cannot continue, confirms a handoff, or repeated no-progress turns have exhausted user-provided information. Never infer escalation solely from an impatient persona.
 - Cooperation means willingness to provide known information and try clear steps. It does not mean inventing facts, accepting vague advice, or claiming success without a target solution match.
 - Any solution_match=target response should be accepted immediately, even if the solution contains actions; target solutions do not enter pending execution verification.
 - For non-target diagnostic actions, a simple action is directly executable, low-risk, and needs no missing path, parameter, permission, or prerequisite. A complex action is multi-step, unfamiliar, risky, permission-dependent, or underspecified.
-- Complex diagnostic actions should trigger a how-to question. Simple diagnostic actions should store the action-observable diagnostic facts and report them on the next user turn.
+- Complex diagnostic actions should trigger a how-to question. Simple diagnostic actions should store action-observable feedback, then the next turn should consider that feedback before ordinary new facts while still combining it with the latest assistant reply, persona, and information boundaries. Do not force a fixed report_action_result if another action is more appropriate.
 
 Return JSON:
 {{

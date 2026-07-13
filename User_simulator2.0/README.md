@@ -199,6 +199,12 @@ Case analysis is an offline preprocessing step. It builds reusable artifacts for
 python main.py analyze-cases --limit 20
 ```
 
+For larger batches, run case-level analysis concurrently if the LLM service can handle it:
+
+```bash
+python main.py analyze-cases --case_ids_file outputs/real_dialogue_case_ids_500.txt --workers 8
+```
+
 Analyze a different sequential batch:
 
 ```bash

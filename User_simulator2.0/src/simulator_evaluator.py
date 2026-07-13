@@ -174,6 +174,10 @@ class SimulatorEvaluator:
             goal = apply_goal_judge(goal, llm_judge)
             cooperation = apply_cooperation_judge(cooperation, llm_judge)
 
+        trajectory = trajectory_state_metrics(simulated_transcripts, artifact)
+        goal = apply_trajectory_to_goal(goal, trajectory)
+        cooperation = apply_trajectory_to_cooperation(cooperation, trajectory)
+
         overall = round(
             weighted_average(
                 {
@@ -193,6 +197,7 @@ class SimulatorEvaluator:
             "behavioral_realism": behavior,
             "goal_alignment": goal,
             "overly_cooperative": cooperation,
+            "trajectory_state": trajectory,
             "enhanced_evaluation": enhanced,  # NEW: Enhanced metrics
             "llm_judge": llm_judge,
             "real_feature_summary": summarize_features(real_features),
@@ -451,34 +456,192 @@ def overly_cooperative(real_features: list[Dict[str, Any]], sim_features: list[D
     }
 
 
+def trajectory_state_metrics(
+    simulated_transcripts: list[Dict[str, Any]],
+    artifact: KnowledgeRoadmapArtifact | None,
+) -> Dict[str, Any]:
+    if not simulated_transcripts:
+        return empty_trajectory_state()
+
+    rows = [trajectory_state_for_session(transcript, artifact) for transcript in simulated_transcripts]
+    target_solution_hit_rate = mean([row["target_solution_hit"] for row in rows])
+    accepted_target_rate = mean([row["accepted_target"] for row in rows])
+    wrong_acceptance_rate = mean([row["wrong_acceptance"] for row in rows])
+    leakage_rate = mean([row["knowledge_leakage"] for row in rows])
+    action_feedback_use_rate = mean([row["action_feedback_used"] for row in rows])
+    repeated_try_rate = mean([row["repeated_try_without_feedback"] for row in rows])
+    no_effective_stop_rate = mean([row["no_effective_stop"] for row in rows])
+
+    solution_score = mean([target_solution_hit_rate, accepted_target_rate])
+    boundary_score = 1.0 - leakage_rate
+    action_feedback_score = 1.0 - min(1.0, max(0.0, repeated_try_rate - action_feedback_use_rate))
+    failure_handling_score = 1.0 - wrong_acceptance_rate
+    trajectory_score = weighted_average(
+        {
+            "solution": solution_score,
+            "boundary": boundary_score,
+            "action_feedback": action_feedback_score,
+            "failure_handling": failure_handling_score,
+        },
+        {"solution": 0.35, "boundary": 0.30, "action_feedback": 0.20, "failure_handling": 0.15},
+    )
+    return {
+        "score": round(trajectory_score, 3),
+        "target_solution_hit_rate": round(target_solution_hit_rate, 3),
+        "accepted_target_rate": round(accepted_target_rate, 3),
+        "wrong_acceptance_rate": round(wrong_acceptance_rate, 3),
+        "knowledge_leakage_rate": round(leakage_rate, 3),
+        "action_feedback_use_rate": round(action_feedback_use_rate, 3),
+        "repeated_try_without_feedback_rate": round(repeated_try_rate, 3),
+        "no_effective_stop_rate": round(no_effective_stop_rate, 3),
+        "session_details": rows,
+    }
+
+
+def empty_trajectory_state() -> Dict[str, Any]:
+    return {
+        "score": 0.0,
+        "target_solution_hit_rate": 0.0,
+        "accepted_target_rate": 0.0,
+        "wrong_acceptance_rate": 0.0,
+        "knowledge_leakage_rate": 0.0,
+        "action_feedback_use_rate": 0.0,
+        "repeated_try_without_feedback_rate": 0.0,
+        "no_effective_stop_rate": 0.0,
+        "session_details": [],
+    }
+
+
+def trajectory_state_for_session(
+    transcript: Dict[str, Any],
+    artifact: KnowledgeRoadmapArtifact | None,
+) -> Dict[str, Any]:
+    messages = transcript.get("messages") or []
+    user_texts = [str(item.get("content") or "") for item in messages if item.get("role") == "user"]
+    assistant_texts = [str(item.get("content") or "") for item in messages if item.get("role") == "assistant"]
+    user_joined = "\n".join(user_texts)
+    assistant_joined = "\n".join(assistant_texts)
+    target_solution_hit = bool(transcript_solution_accepted(transcript))
+    solution_mentioned_by_assistant = False
+    solution_leaked_by_user = False
+    forbidden_leaked_by_user = False
+
+    if artifact:
+        solution_contents = [point.content for point in artifact.roadmap.solution_points]
+        solution_mentioned_by_assistant = any(
+            text_contains_content_loose(assistant_joined, content) for content in solution_contents
+        )
+        solution_leaked_by_user = any(text_contains_content_loose(user_joined, content) for content in solution_contents)
+        forbidden_leaked_by_user = any(
+            text_contains_content_loose(user_joined, content) for content in artifact.roadmap.forbidden_content
+        )
+        target_solution_hit = target_solution_hit or solution_mentioned_by_assistant
+
+    accepted_target = bool(transcript_solution_accepted(transcript)) and target_solution_hit
+    wrong_acceptance = has_acceptance(user_texts) and not target_solution_hit
+    action_feedback_used = any(classify_user_act(text) == "action_feedback" for text in user_texts)
+    repeated_try_without_feedback = has_repeated_try_without_feedback(user_texts)
+    no_effective_stop = transcript.get("stop_reason") == "assistant_unable_to_provide_effective_solution"
+
+    return {
+        "target_solution_hit": 1.0 if target_solution_hit else 0.0,
+        "accepted_target": 1.0 if accepted_target else 0.0,
+        "wrong_acceptance": 1.0 if wrong_acceptance else 0.0,
+        "knowledge_leakage": 1.0 if (solution_leaked_by_user or forbidden_leaked_by_user) else 0.0,
+        "action_feedback_used": 1.0 if action_feedback_used else 0.0,
+        "repeated_try_without_feedback": 1.0 if repeated_try_without_feedback else 0.0,
+        "no_effective_stop": 1.0 if no_effective_stop else 0.0,
+    }
+
+
+def transcript_solution_accepted(transcript: Dict[str, Any]) -> bool:
+    return transcript.get("solution_status") in {"solved", "accepted", "resolved", "solution_accepted"} or transcript.get(
+        "stop_reason"
+    ) in {"solved", "solution_accepted", "accepted_actionable_solution"}
+
+
+def has_acceptance(user_texts: list[str]) -> bool:
+    return any(contains_any(text, ACCEPT_MARKERS) for text in user_texts)
+
+
+def has_repeated_try_without_feedback(user_texts: list[str]) -> bool:
+    try_like = [text for text in user_texts if "试" in text or "操作" in text or "按" in text]
+    feedback_like = [text for text in user_texts if classify_user_act(text) == "action_feedback"]
+    return len(try_like) >= 2 and not feedback_like
+
+
+def text_contains_content_loose(text: str, content: str) -> bool:
+    if not text or not content:
+        return False
+    normalized_content = str(content).strip().lower()
+    normalized_text = str(text).strip().lower()
+    if len(normalized_content) >= 4 and normalized_content in normalized_text:
+        return True
+    content_chars = {char for char in normalized_content if "\u4e00" <= char <= "\u9fff"}
+    text_chars = {char for char in normalized_text if "\u4e00" <= char <= "\u9fff"}
+    if len(content_chars) < 4:
+        return False
+    return len(content_chars & text_chars) / len(content_chars) >= 0.7
+
+
+def apply_trajectory_to_goal(goal: Dict[str, Any], trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(goal)
+    updated["pre_trajectory_score"] = updated.get("score", 0.0)
+    updated["trajectory_state_score"] = trajectory.get("score", 0.0)
+    updated["score"] = round(
+        weighted_average(
+            {
+                "semantic_goal": float(updated.get("score", 0.0)),
+                "trajectory_state": float(trajectory.get("score", 0.0)),
+            },
+            {"semantic_goal": 0.65, "trajectory_state": 0.35},
+        ),
+        3,
+    )
+    return updated
+
+
+def apply_trajectory_to_cooperation(cooperation: Dict[str, Any], trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(cooperation)
+    wrong_acceptance_penalty = float(trajectory.get("wrong_acceptance_rate", 0.0))
+    repeated_try_penalty = float(trajectory.get("repeated_try_without_feedback_rate", 0.0)) * 0.5
+    updated["trajectory_overcooperation_penalty"] = round(min(1.0, wrong_acceptance_penalty + repeated_try_penalty), 3)
+    updated["pre_trajectory_score"] = updated.get("score", 0.0)
+    updated["score"] = round(max(0.0, float(updated.get("score", 0.0)) - updated["trajectory_overcooperation_penalty"] * 0.35), 3)
+    return updated
+
+
 def apply_behavior_judge(rule_behavior: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
-    # NEW: Simplified - just use LLM judge score directly
     behavior = dict(rule_behavior)
     judge_score = judge.get("behavioral_realism_score", 0.0)
     behavior["rule_score"] = rule_behavior.get("score", 0.0)
     behavior["llm_judge_score"] = judge_score
-    behavior["score"] = round(judge_score, 3)
+    behavior["score"] = round(fuse_rule_and_judge(rule_behavior.get("score", 0.0), judge_score), 3)
     return behavior
 
 
 def apply_goal_judge(rule_goal: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
-    # NEW: Simplified - just use LLM judge score directly
     goal = dict(rule_goal)
     judge_score = judge.get("goal_alignment_score", 0.0)
     goal["rule_score"] = rule_goal.get("score", 0.0)
     goal["llm_judge_score"] = judge_score
-    goal["score"] = round(judge_score, 3)
+    goal["score"] = round(fuse_rule_and_judge(rule_goal.get("score", 0.0), judge_score), 3)
     return goal
 
 
 def apply_cooperation_judge(rule_cooperation: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
-    # NEW: Simplified - just use LLM judge score directly
     cooperation = dict(rule_cooperation)
     judge_score = judge.get("anti_overcooperation_score", 0.0)
     cooperation["rule_score"] = rule_cooperation.get("score", 0.0)
     cooperation["llm_judge_score"] = judge_score
-    cooperation["score"] = round(judge_score, 3)
+    cooperation["score"] = round(fuse_rule_and_judge(rule_cooperation.get("score", 0.0), judge_score), 3)
     return cooperation
+
+
+def fuse_rule_and_judge(rule_score: Any, judge_score: Any, judge_weight: float = 0.6) -> float:
+    rule = score_value(rule_score, 0.0)
+    judge = score_value(judge_score, rule)
+    return weighted_average({"rule": rule, "judge": judge}, {"rule": 1.0 - judge_weight, "judge": judge_weight})
 
 
 def normalize_eval_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -579,9 +742,9 @@ def render_eval_summary(reports: list[Dict[str, Any]]) -> str:
         )
     lines.append("")
     if any(report.get("llm_judge") for report in reports):
-        lines.append("Scores combine rule-based distribution metrics with LLM judge scores for semantic realism, goal alignment, and over-cooperation.")
+        lines.append("Scores fuse rule-based metrics, LLM judge scores, and trajectory/state checks for semantic realism, goal alignment, and over-cooperation.")
     else:
-        lines.append("Scores are rule-based offline estimates. Re-run with --judge to add LLM semantic judging for realism, goal alignment, and over-cooperation.")
+        lines.append("Scores are rule-based offline estimates with trajectory/state checks. Re-run with --judge to add LLM semantic judging for realism, goal alignment, and over-cooperation.")
     return "\n".join(lines) + "\n"
 
 
@@ -589,6 +752,7 @@ def render_case_report(report: Dict[str, Any]) -> str:
     behavior = report["behavioral_realism"]
     goal = report["goal_alignment"]
     coop = report["overly_cooperative"]
+    trajectory = report.get("trajectory_state", {})
     enhanced = report.get("enhanced_evaluation", {})
     lines = [
         f"# Simulator Evaluation {report['case_id']}",
@@ -601,7 +765,7 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "",
         f"- score: {behavior['score']:.3f}",
         f"- rule_score: {behavior.get('rule_score', behavior['score'])}",
-        f"- llm_behavioral_realism_score: {behavior.get('llm_behavioral_realism_score', '')}",
+        f"- llm_judge_score: {behavior.get('llm_judge_score', '')}",
         f"- dialogue_act_jsd: {behavior['dialogue_act_jsd']:.3f}",
         f"- session_length_wasserstein: {behavior['session_length_wasserstein']:.3f}",
         f"- words_per_turn_wasserstein: {behavior['words_per_turn_wasserstein']:.3f}",
@@ -611,7 +775,9 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "",
         f"- score: {goal['score']:.3f}",
         f"- rule_score: {goal.get('rule_score', goal['score'])}",
-        f"- llm_goal_alignment_score: {goal.get('llm_goal_alignment_score', '')}",
+        f"- llm_judge_score: {goal.get('llm_judge_score', '')}",
+        f"- pre_trajectory_score: {goal.get('pre_trajectory_score', '')}",
+        f"- trajectory_state_score: {goal.get('trajectory_state_score', '')}",
         f"- goal_persistence_score: {goal['goal_persistence_score']:.3f}",
         f"- knowledge_boundary_score: {goal['knowledge_boundary_score']:.3f}",
         f"- simulated_solved_rate: {goal['simulated_solved_rate']:.3f}",
@@ -620,12 +786,24 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "",
         f"- anti_overcooperation_score: {coop['score']:.3f}",
         f"- rule_score: {coop.get('rule_score', coop['score'])}",
-        f"- llm_anti_overcooperation_score: {coop.get('llm_anti_overcooperation_score', '')}",
+        f"- llm_judge_score: {coop.get('llm_judge_score', '')}",
+        f"- pre_trajectory_score: {coop.get('pre_trajectory_score', '')}",
+        f"- trajectory_overcooperation_penalty: {coop.get('trajectory_overcooperation_penalty', '')}",
         f"- overcooperation_risk: {coop.get('overcooperation_risk', '')}",
         f"- real_accept_rate: {coop['real_accept_rate']:.3f}",
         f"- simulated_accept_rate: {coop['simulated_accept_rate']:.3f}",
         f"- real_resistance_rate: {coop['real_resistance_rate']:.3f}",
         f"- simulated_resistance_rate: {coop['simulated_resistance_rate']:.3f}",
+        "",
+        "## Trajectory State",
+        "",
+        f"- score: {trajectory.get('score', 0.0):.3f}",
+        f"- target_solution_hit_rate: {trajectory.get('target_solution_hit_rate', 0.0):.3f}",
+        f"- accepted_target_rate: {trajectory.get('accepted_target_rate', 0.0):.3f}",
+        f"- wrong_acceptance_rate: {trajectory.get('wrong_acceptance_rate', 0.0):.3f}",
+        f"- knowledge_leakage_rate: {trajectory.get('knowledge_leakage_rate', 0.0):.3f}",
+        f"- action_feedback_use_rate: {trajectory.get('action_feedback_use_rate', 0.0):.3f}",
+        f"- repeated_try_without_feedback_rate: {trajectory.get('repeated_try_without_feedback_rate', 0.0):.3f}",
         "",
         "## Enhanced Evaluation",
         "",

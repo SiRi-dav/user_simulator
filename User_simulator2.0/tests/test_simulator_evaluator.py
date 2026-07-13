@@ -9,6 +9,7 @@ from src.simulator_evaluator import (
     extract_features,
     select_real_dialogues,
     split_logs_into_sessions,
+    trajectory_state_metrics,
 )
 
 
@@ -118,5 +119,49 @@ def test_evaluate_case_can_use_llm_judge(tmp_path: Path):
 
     assert result["llm_judge"]["behavioral_realism_score"] == 0.82
     assert result["behavioral_realism"]["llm_judge_score"] == 0.82
+    assert result["behavioral_realism"]["score"] != 0.82
     assert result["goal_alignment"]["llm_judge_score"] == 0.9
     assert result["overly_cooperative"]["llm_judge_score"] == 0.7
+    assert "trajectory_state" in result
+    assert "trajectory_state_score" in result["goal_alignment"]
+
+
+def test_trajectory_state_detects_wrong_acceptance_without_target_solution():
+    simulated = [
+        {
+            "case_id": "KT001",
+            "solution_status": "",
+            "stop_reason": "",
+            "messages": [
+                {"role": "user", "content": "邮箱打不开了"},
+                {"role": "assistant", "content": "你可以先重启电脑看看。"},
+                {"role": "user", "content": "好的，谢谢。"},
+            ],
+        }
+    ]
+
+    result = trajectory_state_metrics(simulated, None)
+
+    assert result["wrong_acceptance_rate"] == 1.0
+    assert result["target_solution_hit_rate"] == 0.0
+    assert result["score"] < 1.0
+
+
+def test_trajectory_state_tracks_action_feedback_use():
+    simulated = [
+        {
+            "case_id": "KT001",
+            "solution_status": "",
+            "stop_reason": "",
+            "messages": [
+                {"role": "user", "content": "邮箱打不开了"},
+                {"role": "assistant", "content": "你先重启 Outlook 试一下。"},
+                {"role": "user", "content": "我试了，还是打不开。"},
+            ],
+        }
+    ]
+
+    result = trajectory_state_metrics(simulated, None)
+
+    assert result["action_feedback_use_rate"] == 1.0
+    assert result["repeated_try_without_feedback_rate"] == 0.0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict
 
@@ -120,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
     analyze.add_argument("--random", action="store_true", help="Randomly sample --limit cases instead of using offset.")
     analyze.add_argument("--seed", type=int, help="Random seed for --random case sampling.")
+    analyze.add_argument("--workers", type=int, default=1, help="Analyze cases concurrently. Use 4-8 to speed up large batches if the LLM service can handle it.")
 
     mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
     mine.add_argument("--config", default="config.yaml")
@@ -232,37 +234,55 @@ def run_analyze_cases(
         selected_cases = cases[args.offset : args.offset + args.limit]
     if not selected_cases:
         parser.error("No cases selected for analysis.")
-    llm_client = OpenAICompatibleClient.from_config(config)
     blind_user_views: list[BlindUserCaseView] = []
     blind_user_runtime_views: list[BlindUserRuntimeView] = []
     knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
     debug_artifacts: list[CaseAnalysisDebugArtifact] = []
     failed_cases = 0
-    for index, target_case in enumerate(selected_cases, 1):
-        print(f"[{index}/{len(selected_cases)}] Analyzing case {target_case.case_id}: {target_case.title}")
-        try:
-            blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
-                target_case,
-                cases,
-                llm_client,
-                logger,
-                config,
-            )
-        except Exception as exc:
-            failed_cases += 1
-            print(f"[ERROR] Skipped case {target_case.case_id}: {exc}")
-            logger.log(
-                "case_analysis_errors.jsonl",
-                target_case.case_id,
-                "analyze-cases",
-                {"target_case": target_case},
-                {"error_type": type(exc).__name__, "error": str(exc)},
-            )
-            continue
-        blind_user_views.append(blind_view)
-        blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
-        knowledge_artifacts.append(knowledge_artifact)
-        debug_artifacts.append(debug_artifact)
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    total_cases = len(selected_cases)
+    if workers == 1:
+        llm_client = OpenAICompatibleClient.from_config(config)
+        for index, target_case in enumerate(selected_cases, 1):
+            print(f"[{index}/{total_cases}] Analyzing case {target_case.case_id}: {target_case.title}")
+            try:
+                blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
+                    target_case,
+                    cases,
+                    llm_client,
+                    logger,
+                    config,
+                )
+            except Exception as exc:
+                failed_cases += 1
+                log_case_analysis_error(logger, target_case, exc)
+                continue
+            blind_user_views.append(blind_view)
+            blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
+            knowledge_artifacts.append(knowledge_artifact)
+            debug_artifacts.append(debug_artifact)
+    else:
+        print(f"Analyzing {total_cases} case(s) with workers={workers}.")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(analyze_case_worker, target_case, cases, config, output_dir): (index, target_case)
+                for index, target_case in enumerate(selected_cases, 1)
+            }
+            completed = 0
+            for future in as_completed(futures):
+                index, target_case = futures[future]
+                completed += 1
+                try:
+                    blind_view, knowledge_artifact, debug_artifact = future.result()
+                except Exception as exc:
+                    failed_cases += 1
+                    log_case_analysis_error(logger, target_case, exc)
+                    continue
+                blind_user_views.append(blind_view)
+                blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
+                knowledge_artifacts.append(knowledge_artifact)
+                debug_artifacts.append(debug_artifact)
+                print(f"[{completed}/{total_cases}] Analyzed case {target_case.case_id}: {target_case.title}")
     if not knowledge_artifacts:
         parser.error(f"All selected cases failed. See: {output_dir / 'case_analysis_errors.jsonl'}")
     blind_view_path = output_dir / "blind_user_case_views.jsonl"
@@ -295,6 +315,28 @@ def run_analyze_cases(
     print(f"Total debug artifacts: {total_debug_artifacts}")
     if failed_cases:
         print(f"Skipped {failed_cases} failed case(s). Errors written to: {output_dir / 'case_analysis_errors.jsonl'}")
+
+
+def analyze_case_worker(
+    target_case: Case,
+    cases: list[Case],
+    config: Dict[str, Any],
+    output_dir: Path,
+) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact, CaseAnalysisDebugArtifact]:
+    llm_client = OpenAICompatibleClient.from_config(config)
+    logger = OutputLogger(output_dir)
+    return build_case_analysis_artifacts(target_case, cases, llm_client, logger, config)
+
+
+def log_case_analysis_error(logger: OutputLogger, target_case: Case, exc: Exception) -> None:
+    print(f"[ERROR] Skipped case {target_case.case_id}: {exc}")
+    logger.log(
+        "case_analysis_errors.jsonl",
+        target_case.case_id,
+        "analyze-cases",
+        {"target_case": target_case},
+        {"error_type": type(exc).__name__, "error": str(exc)},
+    )
 
 
 def run_simulate(
