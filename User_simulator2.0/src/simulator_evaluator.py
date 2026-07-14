@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from src.behavior_mining.dialogue_loader import load_dialogues
-from src.evaluator_metrics import information_rhythm_stats, opening_realism_stats
+from src.evaluator_metrics import calculate_text_similarity, information_rhythm_stats, opening_realism_stats
 from src.llm.llm_client import LLMClient
 from src.metrics_exporter import knowledge_boundary_stats
 from src.review_exporter import safe_filename
@@ -50,17 +50,17 @@ SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
 请从以下三个核心维度评估模拟用户的真实度和合理性（0.0 到 1.0,越高越好）:
 
 1. 行为真实度 (Behavioral Realism)
-   重点关注:**初始提问像不像真实用户**
-   - 初始提问的自然度:是否像真实员工的表达方式（不过于正式、不过于简略）
-   - 初始提问与目标案例表面问题的相似度:是否准确描述了问题现象
-   - 整体交流风格:是否像真实用户的语言风格和节奏
-   - 澄清/困惑/错误反应:遇到问题时是否像真实用户一样反应
+   重点关注:**整体用户行为是否像真实员工**,初始提问相似度只是低权重辅助诊断项
+   - 宏观行为分布:用户轮数、话语长度、接受/拒绝/澄清/困惑/动作反馈/信息提供的分布是否接近真实对话集合
+   - 条件行为合理性:被追问信息时是否逐步提供事实,被要求动作时是否执行/追问/反馈结果,无效建议后是否会困惑或拒绝
+   - User-Sim Index:交流风格、信息输出模式、澄清行为、错误/失败反应是否像真实用户
+   - Opening Similarity:真实开头、模拟开头和 surface problem 是否对齐;该项主要反映 user-facing problem 拆解质量和初始意图对齐,不能作为模拟器总体质量的主要依据
 
    评分标准:
-   - 0.8-1.0:非常真实,初始提问自然且准确,整体交流风格与真实用户高度一致
-   - 0.5-0.7:基本真实,初始提问合理但有一些不自然之处
-   - 0.2-0.4:不够真实,初始提问过于正式或过于简略,交流风格有明显差异
-   - 0.0-0.1:完全不真实,初始提问像机器生成或明显违背真实用户行为
+   - 0.8-1.0:非常真实,整体行为分布、条件反应和信息节奏都接近真实用户
+   - 0.5-0.7:基本真实,大部分行为合理,但局部有过于规整或过度配合的问题
+   - 0.2-0.4:不够真实,行为分布或条件反应有明显偏差
+   - 0.0-0.1:完全不真实,像脚本执行或明显违背真实用户行为
 
 2. 目标对齐 (Goal Alignment)
    重点关注:**后续对话的信息输出是否忠实于初始目标**
@@ -145,7 +145,8 @@ class SimulatorEvaluator:
         artifact = self.knowledge_artifacts.get(case_id)
         real_features = [extract_features(item) for item in real_transcripts]
         sim_features = [extract_features(item) for item in simulated_transcripts]
-        behavior = behavioral_realism(real_features, sim_features)
+        opening = opening_similarity_alignment(real_transcripts, simulated_transcripts, artifact)
+        behavior = behavioral_realism(real_features, sim_features, opening)
         goal = goal_alignment(case_id, simulated_transcripts, sim_features, artifact)
         cooperation = overly_cooperative(real_features, sim_features)
 
@@ -168,6 +169,7 @@ class SimulatorEvaluator:
                     "rule_goal_alignment": goal,
                     "rule_overly_cooperative": cooperation,
                     "enhanced_metrics": enhanced,
+                    "opening_similarity_alignment": opening,
                 },
             )
             behavior = apply_behavior_judge(behavior, llm_judge)
@@ -359,7 +361,11 @@ def all_user_acts() -> list[str]:
     return ["accept", "reject", "clarify", "confusion", "frustration", "action_feedback", "provide_info", "off_topic", "other"]
 
 
-def behavioral_realism(real_features: list[Dict[str, Any]], sim_features: list[Dict[str, Any]]) -> Dict[str, Any]:
+def behavioral_realism(
+    real_features: list[Dict[str, Any]],
+    sim_features: list[Dict[str, Any]],
+    opening_alignment: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     real_acts = average_distribution([item["act_distribution"] for item in real_features], all_user_acts())
     sim_acts = average_distribution([item["act_distribution"] for item in sim_features], all_user_acts())
     jsd = jensen_shannon(real_acts, sim_acts, all_user_acts())
@@ -369,15 +375,123 @@ def behavioral_realism(real_features: list[Dict[str, Any]], sim_features: list[D
     char_score = distance_score(char_w, scale=max(1.0, mean(flatten([item["user_chars"] for item in real_features]))))
     act_score = 1.0 - min(1.0, jsd)
     usi = user_sim_index(real_features, sim_features)
-    score = round(mean([turn_score, char_score, act_score, usi["score"]]), 3)
+    distribution_score = mean([turn_score, char_score, act_score])
+    conditional_score = mean(
+        [
+            usi["information_pattern"],
+            usi["clarification_behavior"],
+            usi["error_reaction"],
+        ]
+    )
+    opening_score = float((opening_alignment or {}).get("opening_similarity_score", 0.0))
+    score = round(
+        weighted_average(
+            {
+                "opening_similarity": opening_score,
+                "distribution_realism": distribution_score,
+                "conditional_behavior_realism": conditional_score,
+                "user_sim_index": usi["score"],
+            },
+            {
+                "opening_similarity": 0.10,
+                "distribution_realism": 0.40,
+                "conditional_behavior_realism": 0.30,
+                "user_sim_index": 0.20,
+            },
+        ),
+        3,
+    )
     return {
         "score": score,
         "session_length_wasserstein": round(turn_w, 3),
         "words_per_turn_wasserstein": round(char_w, 3),
         "dialogue_act_jsd": round(jsd, 3),
-        "distribution_alignment_score": round(mean([turn_score, char_score, act_score]), 3),
+        "opening_similarity_score": round(opening_score, 3),
+        "distribution_alignment_score": round(distribution_score, 3),
+        "conditional_behavior_realism_score": round(conditional_score, 3),
         "user_sim_index": usi,
+        "opening_similarity_alignment": opening_alignment or empty_opening_similarity_alignment(),
+        "score_weights": {
+            "opening_similarity": 0.10,
+            "distribution_realism": 0.40,
+            "conditional_behavior_realism": 0.30,
+            "user_sim_index": 0.20,
+        },
     }
+
+
+def opening_similarity_alignment(
+    real_transcripts: list[Dict[str, Any]],
+    simulated_transcripts: list[Dict[str, Any]],
+    artifact: KnowledgeRoadmapArtifact | None,
+) -> Dict[str, Any]:
+    real_openings = [text for text in (first_user_text(item) for item in real_transcripts) if text]
+    simulated_openings = [text for text in (first_user_text(item) for item in simulated_transcripts) if text]
+    surface_problem = artifact.roadmap.surface_problem if artifact else ""
+
+    real_sim_scores = [
+        calculate_text_similarity(real_opening, sim_opening)
+        for real_opening in real_openings
+        for sim_opening in simulated_openings
+    ]
+    real_surface_scores = [
+        calculate_text_similarity(real_opening, surface_problem)
+        for real_opening in real_openings
+    ]
+    sim_surface_scores = [
+        calculate_text_similarity(sim_opening, surface_problem)
+        for sim_opening in simulated_openings
+    ]
+
+    real_sim = mean(real_sim_scores)
+    real_surface = mean(real_surface_scores)
+    sim_surface = mean(sim_surface_scores)
+    opening_score = weighted_average(
+        {
+            "real_sim": real_sim,
+            "real_surface": real_surface,
+            "sim_surface": sim_surface,
+        },
+        {
+            "real_sim": 0.40,
+            "real_surface": 0.30,
+            "sim_surface": 0.30,
+        },
+    )
+    return {
+        "opening_similarity_score": round(opening_score, 3),
+        "real_sim_opening_similarity": round(real_sim, 3),
+        "real_surface_similarity": round(real_surface, 3),
+        "sim_surface_similarity": round(sim_surface, 3),
+        "real_opening_count": len(real_openings),
+        "simulated_opening_count": len(simulated_openings),
+        "surface_problem": surface_problem[:200],
+        "sample_real_opening": real_openings[0][:200] if real_openings else "",
+        "sample_simulated_opening": simulated_openings[0][:200] if simulated_openings else "",
+        "interpretation": "Low-weight auxiliary metric for surface problem quality and initial intent alignment, not a standalone simulator quality score.",
+    }
+
+
+def empty_opening_similarity_alignment() -> Dict[str, Any]:
+    return {
+        "opening_similarity_score": 0.0,
+        "real_sim_opening_similarity": 0.0,
+        "real_surface_similarity": 0.0,
+        "sim_surface_similarity": 0.0,
+        "real_opening_count": 0,
+        "simulated_opening_count": 0,
+        "surface_problem": "",
+        "sample_real_opening": "",
+        "sample_simulated_opening": "",
+        "interpretation": "Low-weight auxiliary metric for surface problem quality and initial intent alignment, not a standalone simulator quality score.",
+    }
+
+
+def first_user_text(transcript: Dict[str, Any]) -> str:
+    for message in transcript.get("messages") or []:
+        if message.get("role") == "user":
+            return str(message.get("content") or "").strip()
+    return ""
 
 
 def user_sim_index(real_features: list[Dict[str, Any]], sim_features: list[Dict[str, Any]]) -> Dict[str, Any]:
@@ -725,17 +839,18 @@ def render_eval_summary(reports: list[Dict[str, Any]]) -> str:
     lines = [
         "# Simulator Evaluation Summary",
         "",
-        "| case_id | real | simulated | overall | behavioral | goal | anti-overcoop |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| case_id | real | simulated | overall | behavioral | opening_aux | goal | anti-overcoop |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for report in reports:
         lines.append(
-            "| {case_id} | {real} | {sim} | {overall:.3f} | {behavior:.3f} | {goal:.3f} | {coop:.3f} |".format(
+            "| {case_id} | {real} | {sim} | {overall:.3f} | {behavior:.3f} | {opening:.3f} | {goal:.3f} | {coop:.3f} |".format(
                 case_id=report["case_id"],
                 real=report["real_session_count"],
                 sim=report["simulated_session_count"],
                 overall=report["overall_score"],
                 behavior=report["behavioral_realism"]["score"],
+                opening=report["behavioral_realism"].get("opening_similarity_score", 0.0),
                 goal=report["goal_alignment"]["score"],
                 coop=report["overly_cooperative"]["score"],
             )
@@ -745,11 +860,14 @@ def render_eval_summary(reports: list[Dict[str, Any]]) -> str:
         lines.append("Scores fuse rule-based metrics, LLM judge scores, and trajectory/state checks for semantic realism, goal alignment, and over-cooperation.")
     else:
         lines.append("Scores are rule-based offline estimates with trajectory/state checks. Re-run with --judge to add LLM semantic judging for realism, goal alignment, and over-cooperation.")
+    lines.append("")
+    lines.append("`opening_aux` is a low-weight auxiliary signal for surface-problem quality and initial-intent alignment; it is not a standalone simulator-quality score.")
     return "\n".join(lines) + "\n"
 
 
 def render_case_report(report: Dict[str, Any]) -> str:
     behavior = report["behavioral_realism"]
+    opening = behavior.get("opening_similarity_alignment", empty_opening_similarity_alignment())
     goal = report["goal_alignment"]
     coop = report["overly_cooperative"]
     trajectory = report.get("trajectory_state", {})
@@ -769,7 +887,23 @@ def render_case_report(report: Dict[str, Any]) -> str:
         f"- dialogue_act_jsd: {behavior['dialogue_act_jsd']:.3f}",
         f"- session_length_wasserstein: {behavior['session_length_wasserstein']:.3f}",
         f"- words_per_turn_wasserstein: {behavior['words_per_turn_wasserstein']:.3f}",
+        f"- opening_similarity_score: {behavior.get('opening_similarity_score', 0.0):.3f}",
+        f"- distribution_alignment_score: {behavior.get('distribution_alignment_score', 0.0):.3f}",
+        f"- conditional_behavior_realism_score: {behavior.get('conditional_behavior_realism_score', 0.0):.3f}",
         f"- user_sim_index: {behavior['user_sim_index']['score']:.3f}",
+        f"- score_weights: opening=0.10, distribution=0.40, conditional=0.30, user_sim_index=0.20",
+        "",
+        "### Opening Similarity Auxiliary",
+        "",
+        f"- opening_similarity_score: {opening.get('opening_similarity_score', 0.0):.3f}",
+        f"- real_sim_opening_similarity: {opening.get('real_sim_opening_similarity', 0.0):.3f}",
+        f"- real_surface_similarity: {opening.get('real_surface_similarity', 0.0):.3f}",
+        f"- sim_surface_similarity: {opening.get('sim_surface_similarity', 0.0):.3f}",
+        f"- sample_real_opening: {opening.get('sample_real_opening', '')}",
+        f"- sample_simulated_opening: {opening.get('sample_simulated_opening', '')}",
+        f"- surface_problem: {opening.get('surface_problem', '')}",
+        "",
+        "Opening similarity is a low-weight auxiliary metric for user-facing problem quality and initial intent alignment. A low score may reflect standardized roadmap wording or noisy real openings, not necessarily poor simulator behavior.",
         "",
         "## Goal Alignment",
         "",

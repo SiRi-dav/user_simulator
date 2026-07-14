@@ -7,10 +7,12 @@ from src.simulator_evaluator import (
     behavioral_realism,
     collect_real_case_ids,
     extract_features,
+    opening_similarity_alignment,
     select_real_dialogues,
     split_logs_into_sessions,
     trajectory_state_metrics,
 )
+from tests.test_evaluator_metrics import build_test_artifact
 
 
 def test_select_real_dialogues_matches_case_id_inside_joined_list():
@@ -90,6 +92,34 @@ def test_behavioral_realism_returns_bounded_score():
 
     assert 0.0 <= result["score"] <= 1.0
     assert 0.0 <= result["user_sim_index"]["score"] <= 1.0
+
+
+def test_behavioral_realism_includes_low_weight_opening_similarity():
+    real_transcripts = [
+        {
+            "messages": [
+                {"role": "user", "content": "Outlook打开后自动退出"},
+            ]
+        }
+    ]
+    simulated_transcripts = [
+        {
+            "messages": [
+                {"role": "user", "content": "我这边Outlook一打开就退出来了，帮我看一下"},
+            ]
+        }
+    ]
+    real = [extract_features(item) for item in real_transcripts]
+    simulated = [extract_features(item) for item in simulated_transcripts]
+    opening = opening_similarity_alignment(real_transcripts, simulated_transcripts, build_test_artifact())
+
+    result = behavioral_realism(real, simulated, opening)
+
+    assert 0.0 <= result["opening_similarity_score"] <= 1.0
+    assert result["opening_similarity_alignment"]["real_sim_opening_similarity"] > 0.0
+    assert result["opening_similarity_alignment"]["real_surface_similarity"] > 0.0
+    assert result["opening_similarity_alignment"]["sim_surface_similarity"] > 0.0
+    assert result["score_weights"]["opening_similarity"] == 0.10
 
 
 def test_evaluate_case_can_use_llm_judge(tmp_path: Path):
