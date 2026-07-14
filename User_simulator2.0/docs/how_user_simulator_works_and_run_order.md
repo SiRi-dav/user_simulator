@@ -16,6 +16,42 @@ LLM 负责所有抽取、分类、匹配、决策和生成
 
 它不是泛聊天机器人，而是围绕一个目标 case 模拟真实员工用户和企业 IT 客服 assistant 的多轮对话。
 
+## 1.1 当前版本交接重点
+
+当前版本主要完成了这些工作：
+
+```text
+1. Case analysis 支持断点保护
+   - analyze-cases 默认跳过已经完成分析的 case
+   - 成功分析一个 case 后会立即 upsert 写入 blind view、runtime view、knowledge roadmap 和 debug artifact
+
+2. Related case 检索改成多路召回
+   - 不再把所有 query 混成一次检索
+   - 按 surface / diagnostic / solution / confusion 多路召回
+   - 本地混合检索 + LLM 排序打分
+
+3. Runtime 行为层改为 feedback-aware
+   - KnowledgeAssessment 负责判断本轮 assistant 是否命中 target、用户还有什么可说、是否无新信息
+   - BlindUserAction 负责决定执行、追问步骤、反馈动作结果、接受方案或停止
+   - solution 内容不再直接交给 Blind User 生成回复，避免信息泄漏
+
+4. 评测系统重构
+   - evaluate-simulator 输出 Behavioral Realism、Goal Alignment、Anti-overcooperation 三类主指标
+   - Opening Similarity 被降为低权重辅助项，只占 Behavioral Realism 的 10%
+   - 支持 --session_policy all/latest/first，只评最新一次模拟时用 latest
+
+5. 增加独立 tau2-style 评测
+   - scripts/evaluate_tau2_style.py
+   - 用 knowledge_roadmaps、simulation_logs 和 runtime state 近似 τ²-bench 的 dual-control / assertion / action matching
+
+6. 增加合并导出脚本
+   - scripts/export_combined_transcripts.py
+   - scripts/export_combined_roadmaps.py
+   - scripts/export_combined_eval.py
+```
+
+最常用的交接运行链路在本文第 15 节。
+
 ## 2. 两条主线
 
 这个系统由两条线组成：
@@ -131,22 +167,24 @@ outputs/user_behavior_taxonomy.jsonl
 
 ## 4. 第一步：进入项目目录
 
-如果使用 GitHub 分支里的版本：
+先进入仓库中的 `User_simulator2.0` 目录。不要在命令或文档里固定某台机器的绝对路径，交接时统一使用项目相对路径：
 
 ```bash
-cd /Users/srdluo/Desktop/华为实习/enterprise_user_simulator/User_simulator2.0
+cd <repo_root>/User_simulator2.0
 ```
 
-如果使用桌面外层同步版本：
+后续命令默认都在这个目录下执行。
+
+如果需要确认当前分支：
 
 ```bash
-cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
+git status --short --branch
 ```
 
-建议以后以 Git 仓库里的版本为准：
+当前主要开发分支：
 
 ```text
-enterprise_user_simulator/User_simulator2.0
+user-simulator-action-result-feedback
 ```
 
 ## 5. 第二步：确认配置
@@ -161,13 +199,14 @@ config.yaml
 
 ```yaml
 llm:
-  base_url: "http://10.67.43.7:12345/v1"
-  api_key: "sk-1234"
-  model: "qwen3"
+  provider: "openai-compatible"
+  base_url: "<company_llm_base_url>"
+  api_key: "<api_key>"
+  model: "<model_name>"
 
 paths:
-  cases: "../../RUNTIME/raw_data/格式化案例库/uniknow-full-text.json"
-  dialogues: "../../RUNTIME/raw_data/格式化对话记录/用户和坐席交互09-proceed-full.json"
+  cases: "<relative_or_absolute_case_library_path>"
+  dialogues: "<relative_or_absolute_historical_dialogue_path>"
   output_dir: "outputs"
 ```
 
@@ -176,7 +215,7 @@ paths:
 - `cases`: 真实案例库路径
 - `dialogues`: 历史客服对话记录路径
 - `output_dir`: 中间结果输出目录
-- `llm`: 公司 qwen3/OpenAI SDK-compatible 接入方式
+- `llm`: 公司 OpenAI SDK-compatible 接入方式
 
 如果真实数据文件不在这个位置，需要改 `config.yaml`。
 
@@ -1070,13 +1109,36 @@ runtime 中优先级是：
 
 ## 14. 对照真实对话评测用户模拟器
 
-如果从真实对话文件里选出 20 个有 `CaseID` 的 case，并且每个 case 各跑一次模拟，日志会写入：
+这一步用于评估用户模拟器。它会读取同一批 case 的真实历史对话和模拟对话，并输出自动评分报告。
+
+所有评分默认归一化到 `0.0` 到 `1.0`：
+
+```text
+1.0 = 最好
+0.0 = 最差
+```
+
+summary 表里的字段含义：
+
+```text
+real: 该 case 在真实历史对话文件中匹配到的真实对话条数
+simulated: 该 case 在 simulation_logs.jsonl 中拆出的模拟 session 数量
+overall: 总分
+behavioral: 行为真实度
+opening_aux: 开头相似度辅助项，低权重，不代表整体质量
+goal: 任务导向与目标对齐
+anti-overcoop: 反过度合作，越高表示越不过度配合
+```
+
+模拟日志来自：
 
 ```text
 outputs/simulation_logs.jsonl
 ```
 
-评测命令会从配置里的真实对话文件筛出同 case 的真实对话，再和对应 case 的模拟对话做对照：
+评测命令会从 `config.yaml` 的 `paths.dialogues` 中筛出同 case 的真实对话，再和对应 case 的模拟对话做对照。
+
+评测单个 case：
 
 ```bash
 python3 main.py evaluate-simulator --case_id <真实案例ID>
@@ -1100,10 +1162,41 @@ python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_id
 python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --judge
 ```
 
+如果同一个 case 跑过多次模拟，可以控制评测哪些 session：
+
+```bash
+# 默认，评估该 case 的所有模拟 session
+python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --session_policy all
+
+# 只评估每个 case 时间上最后一次模拟
+python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --session_policy latest
+
+# 只评估每个 case 最早一次模拟
+python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --session_policy first
+```
+
+正式对比最新 prompt 效果时，建议用：
+
+```bash
+python3 main.py evaluate-simulator \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --session_policy latest \
+  --judge
+```
+
+`latest` 的判定方式：
+
+```text
+先按 case_id 过滤日志；
+再按 timestamp 排序，timestamp 缺失时用日志文件中的出现顺序兜底；
+每次 turn 重新从 1 开始时拆成一个新 session；
+latest 取最后拆出的那个 session。
+```
+
 如果真实对话文件不使用 `config.yaml` 里的 `paths.dialogues`，可以手动指定：
 
 ```bash
-python3 main.py evaluate-simulator --case_id <真实案例ID> --dialogues /path/to/真实对话.json
+python3 main.py evaluate-simulator --case_id <真实案例ID> --dialogues <historical_dialogue_path>
 ```
 
 输出位置：
@@ -1118,12 +1211,37 @@ outputs/simulator_eval/<case_id>.md
 
 ```text
 Behavioral Realism:
-  - user turn count / 话语长度的 Wasserstein 距离
-  - 用户 dialogue act 分布的 Jensen-Shannon 散度
-  - User-Sim Index: 交流风格、信息模式、澄清行为、错误反应
-  - 开启 --judge 后，LLM judge 分数与规则分融合，而不是直接覆盖
+  满分 1.0。评估模拟用户是否像真实员工。
+  当前权重：
+    - opening_similarity: 0.10
+    - distribution_realism: 0.40
+    - conditional_behavior_realism: 0.30
+    - user_sim_index: 0.20
+
+  opening_similarity 是低权重辅助项，不用于单独判断 simulator 好坏。
+  它包含三组相似度：
+    - real_sim_opening_similarity: 真实用户开头 vs 模拟用户开头
+    - real_surface_similarity: 真实用户开头 vs roadmap.surface_problem
+    - sim_surface_similarity: 模拟用户开头 vs roadmap.surface_problem
+
+  distribution_realism 包括：
+    - 用户轮数 Wasserstein 距离
+    - 用户每轮话语长度 Wasserstein 距离
+    - 用户 dialogue act 分布 Jensen-Shannon 散度
+
+  conditional_behavior_realism 包括：
+    - 被追问时是否逐步提供信息
+    - 被要求动作时是否执行、追问步骤或反馈结果
+    - 遇到无效建议时是否会困惑、拒绝或拉回目标
+
+  User-Sim Index 包括：
+    - 交流风格
+    - 信息输出模式
+    - 澄清行为
+    - 错误/失败反应
 
 Goal Alignment:
+  满分 1.0。评估模拟用户是否围绕目标 case 推进。
   - goal_persistence_score: 用户是否跑题
   - knowledge_boundary_score: 是否泄露 solution 或外部 case 信息
   - simulated_solved_rate: 模拟对话是否能围绕目标 case 走到解决/接受
@@ -1131,6 +1249,7 @@ Goal Alignment:
   - 开启 --judge 后，LLM 额外判断用户是否真的保持目标一致、是否像偷看答案
 
 Overly Cooperative:
+  满分 1.0。越高表示越不过度合作。
   - simulated_accept_rate 是否明显高于真实用户
   - simulated_resistance_rate 是否明显低于真实用户
   - resistance 包括拒绝、追问、困惑、不满等真实用户常见阻力
@@ -1204,55 +1323,106 @@ Failure diagnosis:
 进入项目：
 
 ```bash
-cd /Users/srdluo/Desktop/华为实习/enterprise_user_simulator/User_simulator2.0
+cd <repo_root>/User_simulator2.0
 ```
 
-先挖历史行为：
+确认配置：
+
+```bash
+python3 main.py --help
+```
+
+可选：先挖历史行为。如果已经有 `outputs/employee_personas.jsonl` 和 `outputs/user_behavior_taxonomy.jsonl`，这一步可以跳过。
 
 ```bash
 python3 main.py mine-behavior --max_dialogues 20
 ```
 
-看有哪些 case：
+选择有真实历史对话的 case：
 
 ```bash
-python3 main.py simulate --list_cases 20
+python3 main.py select-real-cases \
+  --limit 20 \
+  --offset 0 \
+  --output outputs/real_dialogue_case_ids.txt
 ```
 
-批量分析前 20 个 case，生成可复用路书：
+分析这批 case，生成路书：
 
 ```bash
-python3 main.py analyze-cases --limit 20
+python3 main.py analyze-cases \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --workers 4
 ```
 
-或者只分析指定 case：
+如果中断，重复执行同一条命令即可；已经完成分析的 case 会被跳过。强制重跑分析时加：
 
 ```bash
-python3 main.py analyze-cases --case_ids <真实案例ID>
+python3 main.py analyze-cases \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --workers 4 \
+  --rerun_completed
 ```
 
-选择一个已经分析过的 case 跑模拟：
+批量模拟：
 
 ```bash
-python3 main.py simulate --case_id <真实案例ID> --max_turns 8
+python3 main.py simulate-batch \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --assistant_mode api \
+  --max_turns 15
 ```
 
-如果想指定挖掘出的 persona：
+如果只想重跑已经完成过的模拟，加：
 
 ```bash
-python3 main.py simulate --case_id <真实案例ID> --persona_id <persona_id> --max_turns 8
+python3 main.py simulate-batch \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --assistant_mode api \
+  --max_turns 15 \
+  --rerun_completed
+```
+
+评测最新一次模拟结果：
+
+```bash
+python3 main.py evaluate-simulator \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --session_policy latest \
+  --judge
+```
+
+导出合并后的模拟对话、路书和评测结果，方便离线交接：
+
+```bash
+python3 scripts/export_combined_transcripts.py \
+  --case-ids-file outputs/real_dialogue_case_ids.txt \
+  --output all_simulation_transcripts
+
+python3 scripts/export_combined_roadmaps.py \
+  --case-ids-file outputs/real_dialogue_case_ids.txt \
+  --output all_knowledge_roadmaps
+
+python3 scripts/export_combined_eval.py \
+  --case-ids-file outputs/real_dialogue_case_ids.txt \
+  --output all_simulator_eval
+```
+
+输出位置：
+
+```text
+outputs/transcripts/all_simulation_transcripts.md
+outputs/transcripts/all_simulation_transcripts.json
+outputs/review/all_knowledge_roadmaps.md
+outputs/review/all_knowledge_roadmaps.json
+outputs/simulator_eval/all_simulator_eval.md
+outputs/simulator_eval/all_simulator_eval.json
 ```
 
 运行测试：
 
 ```bash
-python3 -m pytest tests
-```
-
-编译检查：
-
-```bash
-python3 -m compileall .
+python3 -m pytest
 ```
 
 ## 16. 关键边界

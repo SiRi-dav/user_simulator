@@ -100,15 +100,15 @@
 
 配置 LLM 和路径。
 
-当前默认配置使用 mentor 提供的 OpenAI SDK-compatible 接入方式：
+配置使用 OpenAI SDK-compatible 接入方式。交接文档里不要写固定机器路径、内网地址或真实密钥，按部署环境填写：
 
 ```yaml
 llm:
   provider: "openai-compatible"
-  base_url: "http://10.67.43.7:12345/v1"
+  base_url: "<company_llm_base_url>"
   endpoint: ""
-  api_key: "sk-1234"
-  model: "qwen3"
+  api_key: "<api_key>"
+  model: "<model_name>"
   temperature: 0.2
   max_tokens: 4096
   timeout: 300
@@ -1053,14 +1053,14 @@ tests/
 进入项目目录：
 
 ```bash
-cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
+cd <repo_root>/User_simulator2.0
 ```
 
-确认 qwen3 服务已经启动，并且 `config.yaml` 中 base_url 正确：
+确认 LLM 服务已经启动，并且 `config.yaml` 中 base_url 正确：
 
 ```yaml
-base_url: "http://10.67.43.7:12345/v1"
-model: "qwen3"
+base_url: "<company_llm_base_url>"
+model: "<model_name>"
 ```
 
 确认 `config.yaml` 中案例库路径正确：
@@ -1182,7 +1182,7 @@ User: 好的，我按这个方法处理一下，谢谢。
 进入项目目录：
 
 ```bash
-cd /Users/srdluo/Desktop/华为实习/User_simulator2.0
+cd <repo_root>/User_simulator2.0
 ```
 
 运行：
