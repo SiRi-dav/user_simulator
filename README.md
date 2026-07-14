@@ -72,3 +72,36 @@ python3 -m src.pipelines.build_goal_bank \
 ```
 
 This route learns how users ask questions for a known answer seed instead of replaying the answer itself.
+
+## Run Original V1 Simulator on Current Roadmaps
+
+To compare the original V1 simulator with the newer simulator using the same evaluation system, keep V1 changes in this main-branch code path and feed it the current `knowledge_roadmaps.jsonl`.
+
+The V1 runner converts each roadmap into the original `UserGoalSeed` shape, runs `src.simulator.runtime.EnterpriseUserSimulator`, calls the real assistant API, and writes an evaluator-compatible `simulation_logs.jsonl`.
+
+```bash
+python3 -m src.pipelines.run_roadmap_api_simulation \
+  --roadmaps outputs_v1/knowledge_roadmaps.jsonl \
+  --output outputs_v1/v1_roadmap_api_simulation.jsonl \
+  --simulation-log-output outputs_v1/simulation_logs.jsonl \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --assistant-base-url http://10.67.43.6:8338 \
+  --max-turns 15
+```
+
+Optional LLM rewriting for V1 user utterances:
+
+```bash
+python3 -m src.pipelines.run_roadmap_api_simulation \
+  --roadmaps outputs_v1/knowledge_roadmaps.jsonl \
+  --output outputs_v1/v1_roadmap_api_simulation.jsonl \
+  --simulation-log-output outputs_v1/simulation_logs.jsonl \
+  --case_ids_file outputs/real_dialogue_case_ids.txt \
+  --assistant-base-url http://10.67.43.6:8338 \
+  --llm-provider openai-compatible \
+  --llm-base-url https://your-llm-host \
+  --llm-model your-model-name \
+  --max-turns 15
+```
+
+The compatible log uses `module = "Simulator.step"` and `simulator_variant = "v1_enterprise_user_simulator"`, so the current evaluator can read it as long as the output directory also contains the same `knowledge_roadmaps.jsonl`.
