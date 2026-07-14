@@ -100,7 +100,6 @@ Return JSON:
   "matched_point_ids": [],
   "allowed_facts": [],
   "unknown_requested_facts": [],
-  "forbidden_content": [],
   "solution_match": "none | partial | actionable_but_not_target | target",
   "progress_status": "new_progress | repeated_no_progress | no_more_user_info",
   "no_more_user_info": false,
@@ -179,7 +178,8 @@ Requirements:
 - In reason, name the selected behavior policy and explain why its trigger applies.
 - Behavior policy controls whether to answer, ask for steps, try an action, report a result, correct the direction, accept, continue, or escalate. Do not replace it with a generic assumption that impatient users always escalate or cooperative users always accept.
 - Use only allowed_facts and unknown_requested_facts from the Knowledge Module assessment.
-- Do not include forbidden_content.
+- Do not add facts beyond allowed_facts, unknown_requested_facts, action execution feedback, and dialogue history.
+- If no allowed fact is available, express uncertainty, say you do not know, ask how to check, or ask for the next step instead of guessing.
 - Answer the assistant's latest question first. If the assistant asked "which file/type/system?", start with that answer.
 - If the assistant asks several questions at once, answer one natural part that matches allowed_facts or unknown_requested_facts. Do not answer with an unrelated known fact.
 - Do not simply repeat the previous user message unless the assistant explicitly asks you to repeat it.

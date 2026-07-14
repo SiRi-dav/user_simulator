@@ -54,9 +54,6 @@ class BlindUser:
         state: DialogueState | None = None,
     ) -> BlindUserAction:
         assessment_json = model_to_dict(assessment)
-        assessment_json["forbidden_content"] = sanitize_forbidden_content_for_blind_user(
-            assessment_json.get("forbidden_content", [])
-        )
         user_prompt = BLIND_USER_ACTION_USER.format(
             surface_problem=surface_problem,
             persona_json=dumps_json(persona),
@@ -73,12 +70,6 @@ class BlindUser:
             schema_name="BlindUserAction",
         )
         return BlindUserAction(**payload)
-
-
-def sanitize_forbidden_content_for_blind_user(forbidden_content: Any) -> List[str]:
-    if not forbidden_content:
-        return []
-    return ["hidden_solution_or_case_details"]
 
 
 def build_action_execution_feedback(state: DialogueState | None) -> Dict[str, Any]:

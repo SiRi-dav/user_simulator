@@ -122,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--random", action="store_true", help="Randomly sample --limit cases instead of using offset.")
     analyze.add_argument("--seed", type=int, help="Random seed for --random case sampling.")
     analyze.add_argument("--workers", type=int, default=1, help="Analyze cases concurrently. Use 4-8 to speed up large batches if the LLM service can handle it.")
+    analyze.add_argument("--rerun_completed", action="store_true", help="Do not skip cases that already have final analysis artifacts.")
 
     mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
     mine.add_argument("--config", default="config.yaml")
@@ -234,16 +235,33 @@ def run_analyze_cases(
         selected_cases = cases[args.offset : args.offset + args.limit]
     if not selected_cases:
         parser.error("No cases selected for analysis.")
-    blind_user_views: list[BlindUserCaseView] = []
-    blind_user_runtime_views: list[BlindUserRuntimeView] = []
-    knowledge_artifacts: list[KnowledgeRoadmapArtifact] = []
-    debug_artifacts: list[CaseAnalysisDebugArtifact] = []
+    blind_view_path = output_dir / "blind_user_case_views.jsonl"
+    blind_runtime_path = output_dir / "blind_user_runtime_views.jsonl"
+    knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
+    debug_path = output_dir / "case_analysis_debug.jsonl"
+    completed_analysis = load_completed_analysis_case_ids(output_dir)
+    pending_cases: list[Case] = []
+    skipped_cases = 0
+    for index, target_case in enumerate(selected_cases, 1):
+        if target_case.case_id in completed_analysis and not args.rerun_completed:
+            skipped_cases += 1
+            print(f"[{index}/{len(selected_cases)}] Skipping analyzed case {target_case.case_id}")
+            continue
+        pending_cases.append(target_case)
+    if not pending_cases:
+        print(
+            "Case analysis done: "
+            f"completed=0, skipped={skipped_cases}, failed=0, "
+            f"knowledge={knowledge_path}, blind_runtime={blind_runtime_path}"
+        )
+        return
     failed_cases = 0
+    completed_now = 0
     workers = max(1, int(getattr(args, "workers", 1) or 1))
-    total_cases = len(selected_cases)
+    total_cases = len(pending_cases)
     if workers == 1:
         llm_client = OpenAICompatibleClient.from_config(config)
-        for index, target_case in enumerate(selected_cases, 1):
+        for index, target_case in enumerate(pending_cases, 1):
             print(f"[{index}/{total_cases}] Analyzing case {target_case.case_id}: {target_case.title}")
             try:
                 blind_view, knowledge_artifact, debug_artifact = build_case_analysis_artifacts(
@@ -257,16 +275,18 @@ def run_analyze_cases(
                 failed_cases += 1
                 log_case_analysis_error(logger, target_case, exc)
                 continue
-            blind_user_views.append(blind_view)
-            blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
-            knowledge_artifacts.append(knowledge_artifact)
-            debug_artifacts.append(debug_artifact)
+            totals = persist_case_analysis_artifacts(output_dir, blind_view, knowledge_artifact, debug_artifact)
+            completed_now += 1
+            print(
+                f"[{index}/{total_cases}] Saved case {target_case.case_id}: "
+                f"knowledge={totals['knowledge']}, blind_runtime={totals['blind_runtime']}, debug={totals['debug']}"
+            )
     else:
         print(f"Analyzing {total_cases} case(s) with workers={workers}.")
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(analyze_case_worker, target_case, cases, config, output_dir): (index, target_case)
-                for index, target_case in enumerate(selected_cases, 1)
+                for index, target_case in enumerate(pending_cases, 1)
             }
             completed = 0
             for future in as_completed(futures):
@@ -278,41 +298,24 @@ def run_analyze_cases(
                     failed_cases += 1
                     log_case_analysis_error(logger, target_case, exc)
                     continue
-                blind_user_views.append(blind_view)
-                blind_user_runtime_views.append(build_blind_user_runtime_view(blind_view))
-                knowledge_artifacts.append(knowledge_artifact)
-                debug_artifacts.append(debug_artifact)
-                print(f"[{completed}/{total_cases}] Analyzed case {target_case.case_id}: {target_case.title}")
-    if not knowledge_artifacts:
-        parser.error(f"All selected cases failed. See: {output_dir / 'case_analysis_errors.jsonl'}")
-    blind_view_path = output_dir / "blind_user_case_views.jsonl"
-    blind_runtime_path = output_dir / "blind_user_runtime_views.jsonl"
-    knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
-    debug_path = output_dir / "case_analysis_debug.jsonl"
-    total_blind_views = upsert_jsonl_by_key(blind_view_path, [model_to_dict(view) for view in blind_user_views], "case_id")
-    total_blind_runtime_views = upsert_jsonl_by_key(
-        blind_runtime_path,
-        [model_to_dict(view) for view in blind_user_runtime_views],
-        "case_id",
+                totals = persist_case_analysis_artifacts(output_dir, blind_view, knowledge_artifact, debug_artifact)
+                completed_now += 1
+                print(
+                    f"[{completed}/{total_cases}] Saved case {target_case.case_id}: "
+                    f"knowledge={totals['knowledge']}, blind_runtime={totals['blind_runtime']}, debug={totals['debug']}"
+                )
+    if completed_now == 0 and failed_cases:
+        parser.error(f"All pending cases failed. See: {output_dir / 'case_analysis_errors.jsonl'}")
+    totals = count_case_analysis_artifacts(output_dir)
+    print(f"Upserted {completed_now} case analysis artifact set(s).")
+    print(f"Total blind-user case views: {totals['blind_views']} ({blind_view_path})")
+    print(f"Total minimal blind-user runtime views: {totals['blind_runtime']} ({blind_runtime_path})")
+    print(f"Total knowledge roadmaps: {totals['knowledge']} ({knowledge_path})")
+    print(f"Total debug artifacts: {totals['debug']} ({debug_path})")
+    print(
+        "Case analysis done: "
+        f"completed={completed_now}, skipped={skipped_cases}, failed={failed_cases}"
     )
-    total_knowledge_artifacts = upsert_jsonl_by_key(
-        knowledge_path,
-        [model_to_dict(artifact) for artifact in knowledge_artifacts],
-        "case_id",
-    )
-    total_debug_artifacts = upsert_jsonl_by_key(
-        debug_path,
-        [model_to_dict(artifact) for artifact in debug_artifacts],
-        "case_id",
-    )
-    print(f"Upserted {len(blind_user_views)} blind-user case views to: {blind_view_path}")
-    print(f"Total blind-user case views: {total_blind_views}")
-    print(f"Upserted {len(blind_user_runtime_views)} minimal blind-user runtime views to: {blind_runtime_path}")
-    print(f"Total minimal blind-user runtime views: {total_blind_runtime_views}")
-    print(f"Upserted {len(knowledge_artifacts)} compact runtime roadmaps to: {knowledge_path}")
-    print(f"Total knowledge roadmaps: {total_knowledge_artifacts}")
-    print(f"Upserted {len(debug_artifacts)} debug artifacts to: {debug_path}")
-    print(f"Total debug artifacts: {total_debug_artifacts}")
     if failed_cases:
         print(f"Skipped {failed_cases} failed case(s). Errors written to: {output_dir / 'case_analysis_errors.jsonl'}")
 
@@ -837,6 +840,57 @@ def load_case_analysis_debug_artifacts(path: Path) -> dict[str, CaseAnalysisDebu
         artifact = CaseAnalysisDebugArtifact(**record)
         artifacts[artifact.case_id] = artifact
     return artifacts
+
+
+def load_completed_analysis_case_ids(output_dir: Path) -> set[str]:
+    """Cases usable by simulation: both roadmap and blind runtime view exist."""
+    knowledge_ids = set(load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl"))
+    blind_runtime_ids = set(load_blind_user_runtime_views(output_dir / "blind_user_runtime_views.jsonl"))
+    return knowledge_ids & blind_runtime_ids
+
+
+def persist_case_analysis_artifacts(
+    output_dir: Path,
+    blind_view: BlindUserCaseView,
+    knowledge_artifact: KnowledgeRoadmapArtifact,
+    debug_artifact: CaseAnalysisDebugArtifact,
+) -> dict[str, int]:
+    blind_runtime_view = build_blind_user_runtime_view(blind_view)
+    total_blind_views = upsert_jsonl_by_key(
+        output_dir / "blind_user_case_views.jsonl",
+        [model_to_dict(blind_view)],
+        "case_id",
+    )
+    total_blind_runtime_views = upsert_jsonl_by_key(
+        output_dir / "blind_user_runtime_views.jsonl",
+        [model_to_dict(blind_runtime_view)],
+        "case_id",
+    )
+    total_knowledge_artifacts = upsert_jsonl_by_key(
+        output_dir / "knowledge_roadmaps.jsonl",
+        [model_to_dict(knowledge_artifact)],
+        "case_id",
+    )
+    total_debug_artifacts = upsert_jsonl_by_key(
+        output_dir / "case_analysis_debug.jsonl",
+        [model_to_dict(debug_artifact)],
+        "case_id",
+    )
+    return {
+        "blind_views": total_blind_views,
+        "blind_runtime": total_blind_runtime_views,
+        "knowledge": total_knowledge_artifacts,
+        "debug": total_debug_artifacts,
+    }
+
+
+def count_case_analysis_artifacts(output_dir: Path) -> dict[str, int]:
+    return {
+        "blind_views": len(load_blind_user_case_views(output_dir / "blind_user_case_views.jsonl")),
+        "blind_runtime": len(load_blind_user_runtime_views(output_dir / "blind_user_runtime_views.jsonl")),
+        "knowledge": len(load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")),
+        "debug": len(load_case_analysis_debug_artifacts(output_dir / "case_analysis_debug.jsonl")),
+    }
 
 
 def upsert_jsonl_by_key(path: Path, new_records: list[Dict[str, Any]], key: str) -> int:

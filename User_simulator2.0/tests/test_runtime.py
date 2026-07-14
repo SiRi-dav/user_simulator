@@ -2,14 +2,17 @@ from main import (
     build_blind_user_runtime_view,
     build_blind_user_view,
     build_runtime_roadmap,
+    count_case_analysis_artifacts,
+    load_completed_analysis_case_ids,
     load_behavior_taxonomy,
     load_employee_personas,
+    persist_case_analysis_artifacts,
 )
 from src.llm.mock_llm_client import MockLLMClient
 from src.roadmap.roadmap_builder import RoadmapBuilder
 from src.runtime.blind_user import BlindUser
 from src.runtime.simulator import Simulator
-from src.schemas import BlindUserCaseView, Case, DialogueState, KnowledgeAssessment
+from src.schemas import BlindUserCaseView, Case, CaseAnalysisDebugArtifact, DialogueState, KnowledgeAssessment, KnowledgeRoadmapArtifact
 
 
 class PromptCaptureLLMClient(MockLLMClient):
@@ -164,6 +167,41 @@ def test_build_blind_user_runtime_view_keeps_only_visible_text_not_point_metadat
     assert "source_case_id" not in str(payload)
 
 
+def test_persist_case_analysis_artifacts_marks_case_completed(tmp_path):
+    llm = MockLLMClient()
+    target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
+    roadmap = RoadmapBuilder(llm).build_roadmap(target, [], [])
+    blind_view = build_blind_user_view(roadmap)
+    knowledge_artifact = KnowledgeRoadmapArtifact(
+        case_id=target.case_id,
+        title=target.title,
+        roadmap=build_runtime_roadmap(roadmap),
+    )
+    debug_artifact = CaseAnalysisDebugArtifact(
+        case_id=target.case_id,
+        target_case=target,
+        retrieval_queries=[],
+        related_cases=[],
+        verified_points=[],
+        dropped_points=[],
+        warnings=[],
+        relations=[],
+        roadmap=roadmap,
+    )
+
+    totals = persist_case_analysis_artifacts(tmp_path, blind_view, knowledge_artifact, debug_artifact)
+
+    assert totals["knowledge"] == 1
+    assert totals["blind_runtime"] == 1
+    assert count_case_analysis_artifacts(tmp_path) == {
+        "blind_views": 1,
+        "blind_runtime": 1,
+        "knowledge": 1,
+        "debug": 1,
+    }
+    assert load_completed_analysis_case_ids(tmp_path) == {"CASE_001"}
+
+
 def test_runtime_loads_manual_seed_behavior_assets_when_outputs_missing(tmp_path):
     output_dir = tmp_path / "outputs"
     output_dir.mkdir()
@@ -220,7 +258,7 @@ def test_runtime_uses_seed_rules_and_merges_mined_behavior_evidence(tmp_path):
     assert "old" not in resolution.state_transitions
 
 
-def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():
+def test_blind_user_action_prompt_receives_only_allowed_knowledge_assessment_fields():
     llm = PromptCaptureLLMClient()
     assessment = KnowledgeAssessment(
         assistant_act="solution_output",
@@ -228,7 +266,6 @@ def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():
         matched_point_ids=["P3"],
         allowed_facts=["assistant 已给出可尝试方法"],
         unknown_requested_facts=[],
-        forbidden_content=["结束 Outlook 残留进程后重新打开", "CASE_001"],
         solution_match="target",
         progress_status="new_progress",
         no_more_user_info=False,
@@ -238,9 +275,10 @@ def test_blind_user_action_prompt_hides_specific_forbidden_solution_text():
 
     BlindUser(llm).choose_action_and_reply(assessment, {"name": "low_tech"}, None, [], "Outlook 打不开", [])
 
-    assert "结束 Outlook 残留进程后重新打开" not in llm.last_user_prompt
-    assert "CASE_001" not in llm.last_user_prompt
-    assert "hidden_solution_or_case_details" in llm.last_user_prompt
+    assert "allowed_facts" in llm.last_user_prompt
+    assert "assistant 已给出可尝试方法" in llm.last_user_prompt
+    assert "forbidden_content" not in llm.last_user_prompt
+    assert "hidden_solution_or_case_details" not in llm.last_user_prompt
 
 
 def test_blind_user_action_prompt_exposes_action_execution_feedback():
@@ -251,7 +289,6 @@ def test_blind_user_action_prompt_exposes_action_execution_feedback():
         matched_point_ids=[],
         allowed_facts=["当前仍不可用"],
         unknown_requested_facts=[],
-        forbidden_content=[],
         solution_match="none",
         progress_status="new_progress",
         no_more_user_info=False,

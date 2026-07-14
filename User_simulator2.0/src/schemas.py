@@ -186,7 +186,6 @@ class KnowledgeAssessment(BaseModel):
     matched_point_ids: List[str] = Field(default_factory=list)
     allowed_facts: List[str] = Field(default_factory=list)
     unknown_requested_facts: List[str] = Field(default_factory=list)
-    forbidden_content: List[str] = Field(default_factory=list)
     solution_match: str = "none"
     progress_status: str = "new_progress"
     no_more_user_info: bool = False
