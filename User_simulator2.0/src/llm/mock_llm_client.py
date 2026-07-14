@@ -233,16 +233,21 @@ class MockLLMClient(LLMClient):
         if schema_name == "SimulatorEvalJudge":
             return {
                 "behavioral_realism_score": 0.82,
-                "user_sim_index": {
-                    "score": 0.8,
-                    "communication_style": 0.85,
-                    "information_pattern": 0.8,
-                    "clarification_behavior": 0.75,
-                    "error_reaction": 0.8,
-                },
                 "goal_alignment_score": 0.9,
                 "anti_overcooperation_score": 0.7,
-                "overcooperation_risk": "medium",
+                "realsim_behavior_score": 0.76,
+                "c2st_realism_score": 0.74,
+                "leakage_aware_success_score": 0.88,
+                "overall_score": 0.815,
+                "analysis": {
+                    "behavioral_realism_analysis": "mock behavioral judge",
+                    "goal_alignment_analysis": "mock goal judge",
+                    "overcooperation_analysis": "mock cooperation judge",
+                    "realsim_behavior_analysis": "mock realsim judge",
+                    "c2st_realism_analysis": "mock c2st judge",
+                    "leakage_aware_success_analysis": "mock leakage judge",
+                },
+                "failure_modes": ["mock failure mode"],
                 "reasons": ["mock simulator eval judge result"],
             }
         return {}

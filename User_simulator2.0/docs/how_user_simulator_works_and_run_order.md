@@ -1123,11 +1123,14 @@ summary 表里的字段含义：
 ```text
 real: 该 case 在真实历史对话文件中匹配到的真实对话条数
 simulated: 该 case 在 simulation_logs.jsonl 中拆出的模拟 session 数量
-overall: 总分
-behavioral: 行为真实度
+overall: 总分；加 --judge 时为 LLM judge 主分
+behavioral: 行为真实度；加 --judge 时为 LLM judge 主分
 opening_aux: 开头相似度辅助项，低权重，不代表整体质量
-goal: 任务导向与目标对齐
-anti-overcoop: 反过度合作，越高表示越不过度配合
+realsim: RealSim-style 八维行为分布；加 --judge 时由 LLM judge 参考规则诊断后给正式分
+c2st: 分类器双样本检验 proxy；加 --judge 时由 LLM judge 参考规则诊断后给正式分
+leak_adj_success: 去泄漏成功；加 --judge 时由 LLM judge 判断是否真实成功
+goal: 任务导向与目标对齐；加 --judge 时为 LLM judge 主分
+anti-overcoop: 反过度合作，越高表示越不过度配合；加 --judge 时为 LLM judge 主分
 ```
 
 模拟日志来自：
@@ -1156,7 +1159,9 @@ python3 main.py evaluate-simulator --case_ids KT001 KT002 KT003
 python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt
 ```
 
-默认评估是规则统计版。如果要让 LLM judge 判断更依赖语义的指标，正式测评建议加：
+默认不加 `--judge` 时是 diagnostic-only 规则诊断版，只适合快速回归和筛 bad case。
+
+正式测评建议加 `--judge`。此时最终主分由 LLM judge 给出，规则统计、分布检验和轨迹状态只作为 evidence：
 
 ```bash
 python3 main.py evaluate-simulator --case_ids_file outputs/real_dialogue_case_ids.txt --judge
@@ -1207,12 +1212,13 @@ outputs/simulator_eval/simulator_eval.jsonl
 outputs/simulator_eval/<case_id>.md
 ```
 
-当前评估分三类：
+当前评估分为 LLM judge 主分和规则诊断证据两层：
 
 ```text
 Behavioral Realism:
   满分 1.0。评估模拟用户是否像真实员工。
-  当前权重：
+  正式评测加 --judge 时，该项由 LLM 参考真实对话、模拟对话、roadmap 和规则诊断后给分。
+  不加 --judge 时，使用以下规则诊断权重生成 diagnostic score：
     - opening_similarity: 0.10
     - distribution_realism: 0.40
     - conditional_behavior_realism: 0.30
@@ -1240,13 +1246,35 @@ Behavioral Realism:
     - 澄清行为
     - 错误/失败反应
 
+RealSim-style Distribution:
+  满分 1.0。
+  正式评测加 --judge 时，LLM 会参考八维规则诊断并结合语义判断给 realsim 正式分。
+  不加 --judge 时，它是规则诊断项，不直接替代 overall。
+  按论文中“行为维度分布对齐”的思路，把企业 IT 咨询场景映射成八个维度：
+    - user_intent: 接受、拒绝、澄清、困惑、动作反馈、信息提供等 intent 分布
+    - feedback: 接受、拒绝、执行动作反馈等反馈信号
+    - emotion: 困惑、挫败、着急等情绪信号
+    - domain_specific_knowledge: Outlook、WeLink、iDesk、VPN、DNS、权限等领域词使用
+    - personal_context_identity: 账号、邮箱、电脑、手机、部门、公司等个人/工作上下文
+    - message_length: 用户话语长度
+    - linguistic_attributes: 提问、不确定表达、第一人称表达等语言属性
+    - errors: 报错、失败、异常、无法打开等错误反馈
+
+C2ST Distribution Check:
+  满分 1.0。C2ST 是 classifier two-sample test 的 proxy。
+  正式评测加 --judge 时，LLM 会参考 C2ST 规则结果，并结合模板化、风格单一、语义自然度等因素给正式分。
+  程序会把真实对话和模拟对话转成轻量行为特征向量，用一个简单近质心分类器区分 real vs simulated。
+  - classifier_accuracy / balanced_accuracy 越高，说明越容易区分真实和模拟
+  - c2st score 越高，说明越难区分，模拟分布越接近真实分布
+  这个指标更适合在 50/150/500 条级别看整体趋势，单个 case 只作为辅助参考。
+
 Goal Alignment:
   满分 1.0。评估模拟用户是否围绕目标 case 推进。
   - goal_persistence_score: 用户是否跑题
   - knowledge_boundary_score: 是否泄露 solution 或外部 case 信息
   - simulated_solved_rate: 模拟对话是否能围绕目标 case 走到解决/接受
   - trajectory_state_score: 是否命中 target solution、是否正确接受、是否出现知识泄漏
-  - 开启 --judge 后，LLM 额外判断用户是否真的保持目标一致、是否像偷看答案
+  - 开启 --judge 后，LLM 作为正式裁判，判断用户是否真的保持目标一致、是否像偷看答案
 
 Overly Cooperative:
   满分 1.0。越高表示越不过度合作。
@@ -1254,7 +1282,7 @@ Overly Cooperative:
   - simulated_resistance_rate 是否明显低于真实用户
   - resistance 包括拒绝、追问、困惑、不满等真实用户常见阻力
   - trajectory_overcooperation_penalty: 惩罚错误接受、重复说去试但没有反馈等过度配合轨迹
-  - 开启 --judge 后，LLM 判断是否存在过度配合、过早接受、缺少真实阻力
+  - 开启 --judge 后，LLM 作为正式裁判，判断是否存在过度配合、过早接受、缺少真实阻力
 
 Trajectory State:
   - target_solution_hit_rate: assistant 是否实际触达目标方案
@@ -1263,9 +1291,16 @@ Trajectory State:
   - knowledge_leakage_rate: 用户是否泄露 solution 或 forbidden content
   - action_feedback_use_rate: 用户是否使用了动作执行后的 observation
   - repeated_try_without_feedback_rate: 是否机械重复“我去试试”但没有反馈结果
+
+Leakage-Aware Success:
+  - raw_success_rate: target solution 被命中并被用户接受的比例
+  - leakage_adjusted_success_rate: 去掉用户侧 solution / forbidden content 泄漏后的真实成功比例
+  - false_success_rate: 错误接受或依赖泄漏导致的虚假成功比例
+  - solution_leakage_rate: 用户侧知识泄漏比例
+  - 开启 --judge 后，LLM 会结合轨迹和语义判断是否真实成功，而不是只看规则匹配
 ```
 
-规则版适合作为第一层自动回归和筛 bad case。`--judge` 版会调用配置里的 LLM，对真实度、目标一致性、过度合作做语义评审；最终分数会融合规则分、LLM judge 和 trajectory/state 检查，避免单纯依赖 judge 感觉分。
+规则版只作为第一层自动回归和筛 bad case。`--judge` 版会调用配置里的 LLM，对 Behavioral Realism、Goal Alignment、Anti-overcooperation、RealSim-style Distribution、C2ST Distribution Check、Leakage-Aware Success 六项做语义评审；最终汇报分数以 LLM judge 为主，规则分只保留为 `diagnostic_rule_score` 用于解释和 ablation。
 
 ### 14.4 额外 τ²-bench-style 双控制评测
 

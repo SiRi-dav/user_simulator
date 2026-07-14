@@ -25,6 +25,45 @@ FRUSTRATION_MARKERS = ("急", "麻烦", "烦", "一直", "怎么还", "崩溃", 
 ACTION_MARKERS = ("试了", "看了", "打开", "重启", "点击", "操作", "登录", "升级", "安装", "配置")
 INFO_MARKERS = ("报错", "提示", "显示", "系统", "电脑", "账号", "邮箱", "文件", "版本", "网络")
 OFF_TOPIC_MARKERS = ("天气", "吃饭", "旅游", "电影", "小说", "股票", "游戏")
+DOMAIN_MARKERS = (
+    "Outlook",
+    "iLearning",
+    "WeLink",
+    "iDesk",
+    "iAuth",
+    "xGate",
+    "VPN",
+    "DNS",
+    "WiFi",
+    "IP",
+    "Office",
+    "Windows",
+    "Mac",
+    "证书",
+    "权限",
+    "内网",
+    "域",
+    "客户端",
+    "服务器",
+)
+PERSONAL_CONTEXT_MARKERS = (
+    "我",
+    "我的",
+    "这台",
+    "电脑",
+    "手机",
+    "账号",
+    "邮箱",
+    "工号",
+    "部门",
+    "公司",
+    "客户",
+    "项目",
+    "同事",
+    "管理员",
+)
+UNCERTAINTY_MARKERS = ("好像", "可能", "大概", "不确定", "不太确定", "没印象", "记不清", "应该", "似乎")
+ERROR_REPORT_MARKERS = ("报错", "错误", "失败", "异常", "打不开", "连不上", "无法", "不能", "不可用", "没反应")
 
 
 SIMULATOR_EVAL_JUDGE_SYSTEM = """你是企业 IT 客服用户模拟器的评测专家。
@@ -47,7 +86,7 @@ SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
 规则统计摘要:
 {feature_summary_json}
 
-请从以下三个核心维度评估模拟用户的真实度和合理性（0.0 到 1.0,越高越好）:
+请以 LLM judge 作为正式评测裁判,规则统计只作为 evidence。请从以下六个维度评估模拟用户的真实度和合理性（0.0 到 1.0,越高越好）:
 
 1. 行为真实度 (Behavioral Realism)
    重点关注:**整体用户行为是否像真实员工**,初始提问相似度只是低权重辅助诊断项
@@ -88,17 +127,48 @@ SIMULATOR_EVAL_JUDGE_USER = """目标 case_id:
    - 0.2-0.4:过度配合,缺少真实的困惑和质疑
    - 0.0-0.1:严重过度配合,完全不像真实用户的行为
 
+4. RealSim-style 行为分布真实性
+   重点关注:**模拟用户在八类行为维度上的分布是否像真实用户**
+   - user_intent: 接受、拒绝、澄清、困惑、动作反馈、信息提供等意图分布
+   - feedback: 是否像真实用户一样接受、拒绝、执行动作并反馈
+   - emotion: 是否有合理困惑、挫败、犹豫,而不是机械配合
+   - domain_specific_knowledge: 领域词使用是否自然,没有过度专业或完全缺失
+   - personal_context_identity: 是否自然表达账号、设备、公司/部门等个人上下文
+   - message_length: 长短和节奏是否接近真实对话
+   - linguistic_attributes: 口语化、不确定表达、第一人称表达是否自然
+   - errors: 报错/失败/异常反馈是否合理
+
+5. C2ST 分布可区分性
+   重点关注:**真实对话和模拟对话是否容易被区分**
+   规则 C2ST 分数只是参考。你需要结合语义判断:
+   - 如果模拟对话明显模板化、过于规整、风格单一,即使规则分高也应降低
+   - 如果真实对话很噪声而模拟对话标准化,不要只因开头不完全相同就判低
+   - 高分表示你认为两者整体分布难以区分
+
+6. Leakage-aware Success 去泄漏成功
+   重点关注:**模拟用户是否靠真实交互走到解决,而不是靠泄漏答案或错误接受**
+   - target solution 被 assistant 命中后接受,且用户没有提前泄漏 solution/forbidden content,应高分
+   - 用户提前说出答案、暴露 roadmap 内部诊断点、或接受无效方案,应低分
+   - assistant 未能有效解决但用户自然结束,不一定是成功,但可作为真实失败处理
+
 返回 JSON:
 {{
   "behavioral_realism_score": 0.0,
   "goal_alignment_score": 0.0,
   "anti_overcooperation_score": 0.0,
+  "realsim_behavior_score": 0.0,
+  "c2st_realism_score": 0.0,
+  "leakage_aware_success_score": 0.0,
   "overall_score": 0.0,
   "analysis": {{
     "behavioral_realism_analysis": "...",
     "goal_alignment_analysis": "...",
-    "overcooperation_analysis": "..."
+    "overcooperation_analysis": "...",
+    "realsim_behavior_analysis": "...",
+    "c2st_realism_analysis": "...",
+    "leakage_aware_success_analysis": "..."
   }},
+  "failure_modes": ["...", "..."],
   "reasons": ["...", "..."]
 }}"""
 
@@ -155,6 +225,12 @@ class SimulatorEvaluator:
 
         # NEW: Enhanced evaluation metrics
         enhanced = enhanced_evaluation(case_id, simulated_transcripts, artifact)
+        realsim = realsim_behavior_distribution(real_transcripts, simulated_transcripts)
+        c2st = c2st_distribution_realism(real_transcripts, simulated_transcripts)
+        trajectory = trajectory_state_metrics(simulated_transcripts, artifact)
+        leakage_success = leakage_aware_success_metrics(trajectory)
+        goal = apply_trajectory_to_goal(goal, trajectory)
+        cooperation = apply_trajectory_to_cooperation(cooperation, trajectory)
 
         llm_judge: Dict[str, Any] | None = None
         if use_judge:
@@ -173,36 +249,33 @@ class SimulatorEvaluator:
                     "rule_overly_cooperative": cooperation,
                     "enhanced_metrics": enhanced,
                     "opening_similarity_alignment": opening,
+                    "trajectory_state": trajectory,
+                    "realsim_behavior_distribution": realsim,
+                    "c2st_distribution_realism": c2st,
+                    "leakage_aware_success": leakage_success,
                 },
             )
             behavior = apply_behavior_judge(behavior, llm_judge)
             goal = apply_goal_judge(goal, llm_judge)
             cooperation = apply_cooperation_judge(cooperation, llm_judge)
+            realsim = apply_realsim_judge(realsim, llm_judge)
+            c2st = apply_c2st_judge(c2st, llm_judge)
+            leakage_success = apply_leakage_success_judge(leakage_success, llm_judge)
 
-        trajectory = trajectory_state_metrics(simulated_transcripts, artifact)
-        goal = apply_trajectory_to_goal(goal, trajectory)
-        cooperation = apply_trajectory_to_cooperation(cooperation, trajectory)
-
-        overall = round(
-            weighted_average(
-                {
-                    "behavioral_realism": behavior["score"],
-                    "goal_alignment": goal["score"],
-                    "anti_overcooperation": cooperation["score"],
-                },
-                {"behavioral_realism": 0.45, "goal_alignment": 0.35, "anti_overcooperation": 0.20},
-            ),
-            3,
-        )
+        overall = final_overall_score(behavior, goal, cooperation, llm_judge)
         return {
             "case_id": case_id,
             "real_session_count": len(real_transcripts),
             "simulated_session_count": len(simulated_transcripts),
+            "evaluation_mode": "llm_judge_primary" if use_judge else "diagnostic_only_rule_based",
             "overall_score": overall,
             "behavioral_realism": behavior,
             "goal_alignment": goal,
             "overly_cooperative": cooperation,
             "trajectory_state": trajectory,
+            "leakage_aware_success": leakage_success,
+            "realsim_behavior_distribution": realsim,
+            "c2st_distribution_realism": c2st,
             "enhanced_evaluation": enhanced,  # NEW: Enhanced metrics
             "llm_judge": llm_judge,
             "real_feature_summary": summarize_features(real_features),
@@ -522,6 +595,161 @@ def user_sim_index(real_features: list[Dict[str, Any]], sim_features: list[Dict[
     }
 
 
+def realsim_behavior_distribution(
+    real_transcripts: list[Dict[str, Any]],
+    simulated_transcripts: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    real_profiles = [realsim_profile(transcript) for transcript in real_transcripts]
+    sim_profiles = [realsim_profile(transcript) for transcript in simulated_transcripts]
+    real_acts = average_distribution([item["intent_distribution"] for item in real_profiles], all_user_acts())
+    sim_acts = average_distribution([item["intent_distribution"] for item in sim_profiles], all_user_acts())
+    intent_jsd = jensen_shannon(real_acts, sim_acts, all_user_acts())
+    intent_score = 1.0 - min(1.0, intent_jsd)
+
+    dimension_scores = {
+        "user_intent": intent_score,
+        "feedback": profile_pair_score(real_profiles, sim_profiles, "feedback_signal_rate"),
+        "emotion": profile_pair_score(real_profiles, sim_profiles, "emotion_signal_rate"),
+        "domain_specific_knowledge": profile_pair_score(real_profiles, sim_profiles, "domain_term_rate"),
+        "personal_context_identity": profile_pair_score(real_profiles, sim_profiles, "personal_context_rate"),
+        "message_length": profile_pair_score(real_profiles, sim_profiles, "avg_user_chars"),
+        "linguistic_attributes": profile_pair_score(real_profiles, sim_profiles, "linguistic_signal_rate"),
+        "errors": profile_pair_score(real_profiles, sim_profiles, "error_report_rate"),
+    }
+    return {
+        "score": round(mean(dimension_scores.values()), 3),
+        "dimension_scores": {key: round(value, 3) for key, value in dimension_scores.items()},
+        "intent_jsd": round(intent_jsd, 3),
+        "real_profile": summarize_realsim_profiles(real_profiles),
+        "simulated_profile": summarize_realsim_profiles(sim_profiles),
+    }
+
+
+def realsim_profile(transcript: Dict[str, Any]) -> Dict[str, Any]:
+    user_texts = transcript_user_texts(transcript)
+    acts = [classify_user_act(text) for text in user_texts]
+    question_rate = marker_turn_rate(user_texts, USER_QUESTION_MARKERS)
+    uncertainty_rate = marker_turn_rate(user_texts, UNCERTAINTY_MARKERS)
+    first_person_rate = marker_turn_rate(user_texts, ("我", "我的", "这边", "这台"))
+    return {
+        "intent_distribution": distribution(acts, all_user_acts()),
+        "feedback_signal_rate": marker_turn_rate(user_texts, ACCEPT_MARKERS + REJECT_MARKERS + ACTION_MARKERS),
+        "emotion_signal_rate": marker_turn_rate(user_texts, CONFUSION_MARKERS + FRUSTRATION_MARKERS),
+        "domain_term_rate": marker_turn_rate(user_texts, DOMAIN_MARKERS),
+        "personal_context_rate": marker_turn_rate(user_texts, PERSONAL_CONTEXT_MARKERS),
+        "avg_user_chars": mean([len(text) for text in user_texts]),
+        "linguistic_signal_rate": mean([question_rate, uncertainty_rate, first_person_rate]),
+        "error_report_rate": marker_turn_rate(user_texts, ERROR_REPORT_MARKERS),
+    }
+
+
+def profile_pair_score(real_profiles: list[Dict[str, Any]], sim_profiles: list[Dict[str, Any]], key: str) -> float:
+    real_value = mean([float(item.get(key) or 0.0) for item in real_profiles])
+    sim_value = mean([float(item.get(key) or 0.0) for item in sim_profiles])
+    scale = max(0.15, abs(real_value))
+    if key == "avg_user_chars":
+        scale = max(8.0, abs(real_value))
+    return distance_score(abs(real_value - sim_value), scale=scale)
+
+
+def summarize_realsim_profiles(profiles: list[Dict[str, Any]]) -> Dict[str, float]:
+    keys = [
+        "feedback_signal_rate",
+        "emotion_signal_rate",
+        "domain_term_rate",
+        "personal_context_rate",
+        "avg_user_chars",
+        "linguistic_signal_rate",
+        "error_report_rate",
+    ]
+    return {key: round(mean([float(item.get(key) or 0.0) for item in profiles]), 3) for key in keys}
+
+
+def c2st_distribution_realism(
+    real_transcripts: list[Dict[str, Any]],
+    simulated_transcripts: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    real_vectors = [c2st_feature_vector(transcript) for transcript in real_transcripts]
+    sim_vectors = [c2st_feature_vector(transcript) for transcript in simulated_transcripts]
+    if not real_vectors or not sim_vectors:
+        return {
+            "available": False,
+            "score": 0.0,
+            "classifier_accuracy": 0.0,
+            "balanced_accuracy": 0.0,
+            "reason": "C2ST requires both real and simulated transcripts.",
+        }
+
+    labels = [0] * len(real_vectors) + [1] * len(sim_vectors)
+    vectors = standardize_vectors(real_vectors + sim_vectors)
+    real_centroid = centroid(vectors[: len(real_vectors)])
+    sim_centroid = centroid(vectors[len(real_vectors) :])
+    predictions = [predict_by_centroid(vector, real_centroid, sim_centroid) for vector in vectors]
+    real_accuracy = safe_rate(sum(1 for pred in predictions[: len(real_vectors)] if pred == 0), len(real_vectors))
+    sim_accuracy = safe_rate(sum(1 for pred in predictions[len(real_vectors) :] if pred == 1), len(sim_vectors))
+    balanced_accuracy = mean([real_accuracy, sim_accuracy])
+    classifier_accuracy = safe_rate(sum(1 for pred, label in zip(predictions, labels) if pred == label), len(labels))
+    separability = abs(balanced_accuracy - 0.5) * 2
+    return {
+        "available": True,
+        "score": round(1.0 - min(1.0, separability), 3),
+        "classifier_accuracy": round(classifier_accuracy, 3),
+        "balanced_accuracy": round(balanced_accuracy, 3),
+        "real_sample_count": len(real_vectors),
+        "simulated_sample_count": len(sim_vectors),
+        "interpretation": "Higher score means a simple classifier has difficulty separating real and simulated dialogues.",
+    }
+
+
+def c2st_feature_vector(transcript: Dict[str, Any]) -> list[float]:
+    features = extract_features(transcript)
+    user_texts = transcript_user_texts(transcript)
+    return [
+        float(features["user_turn_count"]),
+        float(features["avg_user_chars"]),
+        float(features["user_question_rate"]),
+        float(features["accept_rate"]),
+        float(features["reject_rate"]),
+        float(features["clarification_rate"]),
+        float(features["confusion_rate"]),
+        float(features["frustration_rate"]),
+        float(features["action_feedback_rate"]),
+        float(features["provide_info_rate"]),
+        marker_turn_rate(user_texts, DOMAIN_MARKERS),
+        marker_turn_rate(user_texts, PERSONAL_CONTEXT_MARKERS),
+        marker_turn_rate(user_texts, UNCERTAINTY_MARKERS),
+        marker_turn_rate(user_texts, ERROR_REPORT_MARKERS),
+    ]
+
+
+def standardize_vectors(vectors: list[list[float]]) -> list[list[float]]:
+    if not vectors:
+        return []
+    columns = list(zip(*vectors))
+    means = [mean(column) for column in columns]
+    stds = [
+        math.sqrt(mean([(value - column_mean) ** 2 for value in column])) or 1.0
+        for column, column_mean in zip(columns, means)
+    ]
+    return [[(value - means[index]) / stds[index] for index, value in enumerate(vector)] for vector in vectors]
+
+
+def centroid(vectors: list[list[float]]) -> list[float]:
+    if not vectors:
+        return []
+    return [mean(column) for column in zip(*vectors)]
+
+
+def predict_by_centroid(vector: list[float], real_centroid: list[float], sim_centroid: list[float]) -> int:
+    real_distance = euclidean_distance(vector, real_centroid)
+    sim_distance = euclidean_distance(vector, sim_centroid)
+    return 1 if sim_distance < real_distance else 0
+
+
+def euclidean_distance(left: list[float], right: list[float]) -> float:
+    return math.sqrt(sum((left_value - right_value) ** 2 for left_value, right_value in zip(left, right)))
+
+
 def goal_alignment(
     case_id: str,
     simulated_transcripts: list[Dict[str, Any]],
@@ -607,6 +835,32 @@ def trajectory_state_metrics(
         "repeated_try_without_feedback_rate": round(repeated_try_rate, 3),
         "no_effective_stop_rate": round(no_effective_stop_rate, 3),
         "session_details": rows,
+    }
+
+
+def leakage_aware_success_metrics(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    rows = trajectory.get("session_details") or []
+    if not rows:
+        return {
+            "raw_success_rate": 0.0,
+            "leakage_adjusted_success_rate": 0.0,
+            "false_success_rate": 0.0,
+            "solution_leakage_rate": 0.0,
+        }
+    raw_success = [1.0 if row.get("target_solution_hit") and row.get("accepted_target") else 0.0 for row in rows]
+    leakage = [1.0 if row.get("knowledge_leakage") else 0.0 for row in rows]
+    adjusted_success = [
+        1.0 if success and not row.get("knowledge_leakage") else 0.0 for success, row in zip(raw_success, rows)
+    ]
+    false_success = [
+        1.0 if row.get("wrong_acceptance") or (success and row.get("knowledge_leakage")) else 0.0
+        for success, row in zip(raw_success, rows)
+    ]
+    return {
+        "raw_success_rate": round(mean(raw_success), 3),
+        "leakage_adjusted_success_rate": round(mean(adjusted_success), 3),
+        "false_success_rate": round(mean(false_success), 3),
+        "solution_leakage_rate": round(mean(leakage), 3),
     }
 
 
@@ -726,49 +980,119 @@ def apply_trajectory_to_cooperation(cooperation: Dict[str, Any], trajectory: Dic
 def apply_behavior_judge(rule_behavior: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
     behavior = dict(rule_behavior)
     judge_score = judge.get("behavioral_realism_score", 0.0)
-    behavior["rule_score"] = rule_behavior.get("score", 0.0)
+    behavior["diagnostic_rule_score"] = rule_behavior.get("score", 0.0)
     behavior["llm_judge_score"] = judge_score
-    behavior["score"] = round(fuse_rule_and_judge(rule_behavior.get("score", 0.0), judge_score), 3)
+    behavior["score"] = score_value(judge_score, rule_behavior.get("score", 0.0))
+    behavior["scoring_mode"] = "llm_judge_primary"
     return behavior
 
 
 def apply_goal_judge(rule_goal: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
     goal = dict(rule_goal)
     judge_score = judge.get("goal_alignment_score", 0.0)
-    goal["rule_score"] = rule_goal.get("score", 0.0)
+    goal["diagnostic_rule_score"] = rule_goal.get("score", 0.0)
     goal["llm_judge_score"] = judge_score
-    goal["score"] = round(fuse_rule_and_judge(rule_goal.get("score", 0.0), judge_score), 3)
+    goal["score"] = score_value(judge_score, rule_goal.get("score", 0.0))
+    goal["scoring_mode"] = "llm_judge_primary"
     return goal
 
 
 def apply_cooperation_judge(rule_cooperation: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
     cooperation = dict(rule_cooperation)
     judge_score = judge.get("anti_overcooperation_score", 0.0)
-    cooperation["rule_score"] = rule_cooperation.get("score", 0.0)
+    cooperation["diagnostic_rule_score"] = rule_cooperation.get("score", 0.0)
     cooperation["llm_judge_score"] = judge_score
-    cooperation["score"] = round(fuse_rule_and_judge(rule_cooperation.get("score", 0.0), judge_score), 3)
+    cooperation["score"] = score_value(judge_score, rule_cooperation.get("score", 0.0))
+    cooperation["scoring_mode"] = "llm_judge_primary"
     return cooperation
 
 
-def fuse_rule_and_judge(rule_score: Any, judge_score: Any, judge_weight: float = 0.6) -> float:
-    rule = score_value(rule_score, 0.0)
-    judge = score_value(judge_score, rule)
-    return weighted_average({"rule": rule, "judge": judge}, {"rule": 1.0 - judge_weight, "judge": judge_weight})
+def apply_realsim_judge(realsim: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(realsim)
+    judge_score = judge.get("realsim_behavior_score", realsim.get("score", 0.0))
+    updated["diagnostic_rule_score"] = realsim.get("score", 0.0)
+    updated["llm_judge_score"] = score_value(judge_score, realsim.get("score", 0.0))
+    updated["score"] = updated["llm_judge_score"]
+    updated["scoring_mode"] = "llm_judge_primary"
+    return updated
+
+
+def apply_c2st_judge(c2st: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(c2st)
+    judge_score = judge.get("c2st_realism_score", c2st.get("score", 0.0))
+    updated["diagnostic_rule_score"] = c2st.get("score", 0.0)
+    updated["llm_judge_score"] = score_value(judge_score, c2st.get("score", 0.0))
+    updated["score"] = updated["llm_judge_score"]
+    updated["scoring_mode"] = "llm_judge_primary"
+    return updated
+
+
+def apply_leakage_success_judge(leakage_success: Dict[str, Any], judge: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(leakage_success)
+    rule_score = leakage_success.get("leakage_adjusted_success_rate", 0.0)
+    judge_score = judge.get("leakage_aware_success_score", rule_score)
+    updated["diagnostic_rule_score"] = rule_score
+    updated["llm_judge_score"] = score_value(judge_score, rule_score)
+    updated["score"] = updated["llm_judge_score"]
+    updated["scoring_mode"] = "llm_judge_primary"
+    return updated
+
+
+def final_overall_score(
+    behavior: Dict[str, Any],
+    goal: Dict[str, Any],
+    cooperation: Dict[str, Any],
+    judge: Dict[str, Any] | None,
+) -> float:
+    if judge and "overall_score" in judge:
+        return score_value(judge.get("overall_score"), 0.0)
+    return round(
+        weighted_average(
+            {
+                "behavioral_realism": score_value(behavior.get("score"), 0.0),
+                "goal_alignment": score_value(goal.get("score"), 0.0),
+                "anti_overcooperation": score_value(cooperation.get("score"), 0.0),
+            },
+            {"behavioral_realism": 0.45, "goal_alignment": 0.35, "anti_overcooperation": 0.20},
+        ),
+        3,
+    )
 
 
 def normalize_eval_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    # NEW: Simplified judge payload focusing on three core dimensions
     analysis = payload.get("analysis") or {}
-    return {
-        "behavioral_realism_score": score_value(payload.get("behavioral_realism_score"), 0.0),
-        "goal_alignment_score": score_value(payload.get("goal_alignment_score"), 0.0),
-        "anti_overcooperation_score": score_value(payload.get("anti_overcooperation_score"), 0.0),
-        "overall_score": score_value(payload.get("overall_score"), 0.0),
+    behavioral = score_value(payload.get("behavioral_realism_score"), 0.0)
+    goal = score_value(payload.get("goal_alignment_score"), 0.0)
+    anti_overcoop = score_value(payload.get("anti_overcooperation_score"), 0.0)
+    overall_default = weighted_average(
+        {
+            "behavioral_realism": behavioral,
+            "goal_alignment": goal,
+            "anti_overcooperation": anti_overcoop,
+        },
+        {"behavioral_realism": 0.40, "goal_alignment": 0.35, "anti_overcooperation": 0.25},
+    )
+    result = {
+        "behavioral_realism_score": behavioral,
+        "goal_alignment_score": goal,
+        "anti_overcooperation_score": anti_overcoop,
+        "overall_score": score_value(payload.get("overall_score"), overall_default),
         "behavioral_realism_analysis": str(analysis.get("behavioral_realism_analysis", "")),
         "goal_alignment_analysis": str(analysis.get("goal_alignment_analysis", "")),
         "overcooperation_analysis": str(analysis.get("overcooperation_analysis", "")),
+        "realsim_behavior_analysis": str(analysis.get("realsim_behavior_analysis", "")),
+        "c2st_realism_analysis": str(analysis.get("c2st_realism_analysis", "")),
+        "leakage_aware_success_analysis": str(analysis.get("leakage_aware_success_analysis", "")),
+        "failure_modes": normalize_string_list(payload.get("failure_modes")),
         "reasons": normalize_string_list(payload.get("reasons")),
     }
+    if "realsim_behavior_score" in payload:
+        result["realsim_behavior_score"] = score_value(payload.get("realsim_behavior_score"), 0.0)
+    if "c2st_realism_score" in payload:
+        result["c2st_realism_score"] = score_value(payload.get("c2st_realism_score"), 0.0)
+    if "leakage_aware_success_score" in payload:
+        result["leakage_aware_success_score"] = score_value(payload.get("leakage_aware_success_score"), 0.0)
+    return result
 
 
 def normalize_user_sim_index(value: Any) -> Dict[str, float]:
@@ -837,29 +1161,36 @@ def render_eval_summary(reports: list[Dict[str, Any]]) -> str:
     lines = [
         "# Simulator Evaluation Summary",
         "",
-        "| case_id | real | simulated | overall | behavioral | opening_aux | goal | anti-overcoop |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| case_id | real | simulated | overall | behavioral | opening_aux | realsim | c2st | leak_adj_success | goal | anti-overcoop |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for report in reports:
         lines.append(
-            "| {case_id} | {real} | {sim} | {overall:.3f} | {behavior:.3f} | {opening:.3f} | {goal:.3f} | {coop:.3f} |".format(
+            "| {case_id} | {real} | {sim} | {overall:.3f} | {behavior:.3f} | {opening:.3f} | {realsim:.3f} | {c2st:.3f} | {leak_adj:.3f} | {goal:.3f} | {coop:.3f} |".format(
                 case_id=report["case_id"],
                 real=report["real_session_count"],
                 sim=report["simulated_session_count"],
                 overall=report["overall_score"],
                 behavior=report["behavioral_realism"]["score"],
                 opening=report["behavioral_realism"].get("opening_similarity_score", 0.0),
+                realsim=report.get("realsim_behavior_distribution", {}).get("score", 0.0),
+                c2st=report.get("c2st_distribution_realism", {}).get("score", 0.0),
+                leak_adj=report.get("leakage_aware_success", {}).get(
+                    "score",
+                    report.get("leakage_aware_success", {}).get("leakage_adjusted_success_rate", 0.0),
+                ),
                 goal=report["goal_alignment"]["score"],
                 coop=report["overly_cooperative"]["score"],
             )
         )
     lines.append("")
     if any(report.get("llm_judge") for report in reports):
-        lines.append("Scores fuse rule-based metrics, LLM judge scores, and trajectory/state checks for semantic realism, goal alignment, and over-cooperation.")
+        lines.append("Final scores are LLM-judge primary. Rule-based metrics, distribution checks, and trajectory/state checks are supporting diagnostics/evidence.")
     else:
-        lines.append("Scores are rule-based offline estimates with trajectory/state checks. Re-run with --judge to add LLM semantic judging for realism, goal alignment, and over-cooperation.")
+        lines.append("Diagnostic-only mode: scores are rule-based offline estimates. Use --judge for formal LLM-judge primary evaluation.")
     lines.append("")
     lines.append("`opening_aux` is a low-weight auxiliary signal for surface-problem quality and initial-intent alignment; it is not a standalone simulator-quality score.")
+    lines.append("`realsim` is an eight-dimension behavior-distribution diagnostic. `c2st` is a classifier two-sample test proxy: higher means real and simulated sessions are harder to separate. `leak_adj_success` counts accepted target solutions only when no user-side knowledge leakage is detected.")
     return "\n".join(lines) + "\n"
 
 
@@ -869,19 +1200,24 @@ def render_case_report(report: Dict[str, Any]) -> str:
     goal = report["goal_alignment"]
     coop = report["overly_cooperative"]
     trajectory = report.get("trajectory_state", {})
+    leakage_success = report.get("leakage_aware_success", {})
+    realsim = report.get("realsim_behavior_distribution", {})
+    c2st = report.get("c2st_distribution_realism", {})
     enhanced = report.get("enhanced_evaluation", {})
     lines = [
         f"# Simulator Evaluation {report['case_id']}",
         "",
         f"- real_session_count: {report['real_session_count']}",
         f"- simulated_session_count: {report['simulated_session_count']}",
+        f"- evaluation_mode: {report.get('evaluation_mode', 'diagnostic_only_rule_based')}",
         f"- overall_score: {report['overall_score']:.3f}",
         "",
         "## Behavioral Realism",
         "",
         f"- score: {behavior['score']:.3f}",
-        f"- rule_score: {behavior.get('rule_score', behavior['score'])}",
+        f"- diagnostic_rule_score: {behavior.get('diagnostic_rule_score', behavior.get('rule_score', behavior['score']))}",
         f"- llm_judge_score: {behavior.get('llm_judge_score', '')}",
+        f"- scoring_mode: {behavior.get('scoring_mode', 'diagnostic_only_rule_based')}",
         f"- dialogue_act_jsd: {behavior['dialogue_act_jsd']:.3f}",
         f"- session_length_wasserstein: {behavior['session_length_wasserstein']:.3f}",
         f"- words_per_turn_wasserstein: {behavior['words_per_turn_wasserstein']:.3f}",
@@ -903,11 +1239,32 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "",
         "Opening similarity is a low-weight auxiliary metric for user-facing problem quality and initial intent alignment. A low score may reflect standardized roadmap wording or noisy real openings, not necessarily poor simulator behavior.",
         "",
+        "## RealSim-Style Distribution",
+        "",
+        f"- score: {realsim.get('score', 0.0):.3f}",
+        f"- diagnostic_rule_score: {realsim.get('diagnostic_rule_score', realsim.get('score', 0.0))}",
+        f"- llm_judge_score: {realsim.get('llm_judge_score', '')}",
+        f"- intent_jsd: {realsim.get('intent_jsd', 0.0):.3f}",
+        "",
+        "```json",
+        json.dumps(realsim.get("dimension_scores", {}), ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## C2ST Distribution Check",
+        "",
+        f"- score: {c2st.get('score', 0.0):.3f}",
+        f"- diagnostic_rule_score: {c2st.get('diagnostic_rule_score', c2st.get('score', 0.0))}",
+        f"- llm_judge_score: {c2st.get('llm_judge_score', '')}",
+        f"- classifier_accuracy: {c2st.get('classifier_accuracy', 0.0):.3f}",
+        f"- balanced_accuracy: {c2st.get('balanced_accuracy', 0.0):.3f}",
+        f"- available: {c2st.get('available', False)}",
+        "",
         "## Goal Alignment",
         "",
         f"- score: {goal['score']:.3f}",
-        f"- rule_score: {goal.get('rule_score', goal['score'])}",
+        f"- diagnostic_rule_score: {goal.get('diagnostic_rule_score', goal.get('rule_score', goal['score']))}",
         f"- llm_judge_score: {goal.get('llm_judge_score', '')}",
+        f"- scoring_mode: {goal.get('scoring_mode', 'diagnostic_only_rule_based')}",
         f"- pre_trajectory_score: {goal.get('pre_trajectory_score', '')}",
         f"- trajectory_state_score: {goal.get('trajectory_state_score', '')}",
         f"- goal_persistence_score: {goal['goal_persistence_score']:.3f}",
@@ -917,8 +1274,9 @@ def render_case_report(report: Dict[str, Any]) -> str:
         "## Overly Cooperative",
         "",
         f"- anti_overcooperation_score: {coop['score']:.3f}",
-        f"- rule_score: {coop.get('rule_score', coop['score'])}",
+        f"- diagnostic_rule_score: {coop.get('diagnostic_rule_score', coop.get('rule_score', coop['score']))}",
         f"- llm_judge_score: {coop.get('llm_judge_score', '')}",
+        f"- scoring_mode: {coop.get('scoring_mode', 'diagnostic_only_rule_based')}",
         f"- pre_trajectory_score: {coop.get('pre_trajectory_score', '')}",
         f"- trajectory_overcooperation_penalty: {coop.get('trajectory_overcooperation_penalty', '')}",
         f"- overcooperation_risk: {coop.get('overcooperation_risk', '')}",
@@ -936,6 +1294,16 @@ def render_case_report(report: Dict[str, Any]) -> str:
         f"- knowledge_leakage_rate: {trajectory.get('knowledge_leakage_rate', 0.0):.3f}",
         f"- action_feedback_use_rate: {trajectory.get('action_feedback_use_rate', 0.0):.3f}",
         f"- repeated_try_without_feedback_rate: {trajectory.get('repeated_try_without_feedback_rate', 0.0):.3f}",
+        "",
+        "## Leakage-Aware Success",
+        "",
+        f"- score: {leakage_success.get('score', leakage_success.get('leakage_adjusted_success_rate', 0.0)):.3f}",
+        f"- diagnostic_rule_score: {leakage_success.get('diagnostic_rule_score', leakage_success.get('leakage_adjusted_success_rate', 0.0))}",
+        f"- llm_judge_score: {leakage_success.get('llm_judge_score', '')}",
+        f"- raw_success_rate: {leakage_success.get('raw_success_rate', 0.0):.3f}",
+        f"- leakage_adjusted_success_rate: {leakage_success.get('leakage_adjusted_success_rate', 0.0):.3f}",
+        f"- false_success_rate: {leakage_success.get('false_success_rate', 0.0):.3f}",
+        f"- solution_leakage_rate: {leakage_success.get('solution_leakage_rate', 0.0):.3f}",
         "",
         "## Enhanced Evaluation",
         "",
@@ -955,7 +1323,23 @@ def render_case_report(report: Dict[str, Any]) -> str:
     ]
     if report.get("llm_judge"):
         lines.extend(["## LLM Judge Reasons", ""])
+        analysis_fields = [
+            ("behavioral_realism", "behavioral_realism_analysis"),
+            ("goal_alignment", "goal_alignment_analysis"),
+            ("overcooperation", "overcooperation_analysis"),
+            ("realsim_behavior", "realsim_behavior_analysis"),
+            ("c2st_realism", "c2st_realism_analysis"),
+            ("leakage_aware_success", "leakage_aware_success_analysis"),
+        ]
+        for label, key in analysis_fields:
+            value = report["llm_judge"].get(key, "")
+            if value:
+                lines.append(f"- {label}: {value}")
         lines.extend(f"- {reason}" for reason in report["llm_judge"].get("reasons", []))
+        if report["llm_judge"].get("failure_modes"):
+            lines.append("")
+            lines.append("Failure modes:")
+            lines.extend(f"- {item}" for item in report["llm_judge"].get("failure_modes", []))
         lines.append("")
     lines.extend(
         [
@@ -974,6 +1358,14 @@ def render_case_report(report: Dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def transcript_user_texts(transcript: Dict[str, Any]) -> list[str]:
+    return [str(item.get("content") or "") for item in transcript.get("messages") or [] if item.get("role") == "user"]
+
+
+def marker_turn_rate(texts: list[str], markers: Iterable[str]) -> float:
+    return safe_rate(sum(1 for text in texts if contains_any(text, markers)), len(texts))
 
 
 def contains_any(text: str, markers: Iterable[str]) -> bool:

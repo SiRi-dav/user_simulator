@@ -5,10 +5,13 @@ from src.schemas import DialogueTurn, HistoricalDialogue
 from src.simulator_evaluator import (
     SimulatorEvaluator,
     behavioral_realism,
+    c2st_distribution_realism,
     collect_real_case_ids,
     extract_features,
+    leakage_aware_success_metrics,
     load_simulated_sessions,
     opening_similarity_alignment,
+    realsim_behavior_distribution,
     select_real_dialogues,
     split_logs_into_sessions,
     trajectory_state_metrics,
@@ -182,13 +185,22 @@ def test_evaluate_case_can_use_llm_judge(tmp_path: Path):
 
     result = evaluator.evaluate_case("KT001", real, simulated, use_judge=True)
 
+    assert result["evaluation_mode"] == "llm_judge_primary"
+    assert result["overall_score"] == 0.815
     assert result["llm_judge"]["behavioral_realism_score"] == 0.82
     assert result["behavioral_realism"]["llm_judge_score"] == 0.82
-    assert result["behavioral_realism"]["score"] != 0.82
+    assert result["behavioral_realism"]["score"] == 0.82
+    assert "diagnostic_rule_score" in result["behavioral_realism"]
     assert result["goal_alignment"]["llm_judge_score"] == 0.9
     assert result["overly_cooperative"]["llm_judge_score"] == 0.7
     assert "trajectory_state" in result
     assert "trajectory_state_score" in result["goal_alignment"]
+    assert "realsim_behavior_distribution" in result
+    assert "c2st_distribution_realism" in result
+    assert "leakage_aware_success" in result
+    assert result["realsim_behavior_distribution"]["llm_judge_score"] == 0.76
+    assert result["c2st_distribution_realism"]["llm_judge_score"] == 0.74
+    assert result["leakage_aware_success"]["llm_judge_score"] == 0.88
 
 
 def test_trajectory_state_detects_wrong_acceptance_without_target_solution():
@@ -230,3 +242,62 @@ def test_trajectory_state_tracks_action_feedback_use():
 
     assert result["action_feedback_use_rate"] == 1.0
     assert result["repeated_try_without_feedback_rate"] == 0.0
+
+
+def test_realsim_behavior_distribution_has_eight_dimensions():
+    real = [
+        {
+            "messages": [
+                {"role": "user", "content": "我的 Outlook 报错打不开"},
+                {"role": "user", "content": "我试了重启，还是不行"},
+            ]
+        }
+    ]
+    simulated = [
+        {
+            "messages": [
+                {"role": "user", "content": "我的 Outlook 打不开"},
+                {"role": "user", "content": "我试了，还是报错"},
+            ]
+        }
+    ]
+
+    result = realsim_behavior_distribution(real, simulated)
+
+    assert 0.0 <= result["score"] <= 1.0
+    assert set(result["dimension_scores"]) == {
+        "user_intent",
+        "feedback",
+        "emotion",
+        "domain_specific_knowledge",
+        "personal_context_identity",
+        "message_length",
+        "linguistic_attributes",
+        "errors",
+    }
+
+
+def test_c2st_distribution_realism_returns_bounded_score():
+    real = [{"messages": [{"role": "user", "content": "我的邮箱打不开，提示账号异常"}]}]
+    simulated = [{"messages": [{"role": "user", "content": "邮箱打不开了，显示账号异常"}]}]
+
+    result = c2st_distribution_realism(real, simulated)
+
+    assert result["available"] is True
+    assert 0.0 <= result["score"] <= 1.0
+    assert 0.0 <= result["balanced_accuracy"] <= 1.0
+
+
+def test_leakage_aware_success_discounts_leaked_success():
+    trajectory = {
+        "session_details": [
+            {"target_solution_hit": 1.0, "accepted_target": 1.0, "knowledge_leakage": 1.0, "wrong_acceptance": 0.0},
+            {"target_solution_hit": 1.0, "accepted_target": 1.0, "knowledge_leakage": 0.0, "wrong_acceptance": 0.0},
+        ]
+    }
+
+    result = leakage_aware_success_metrics(trajectory)
+
+    assert result["raw_success_rate"] == 1.0
+    assert result["leakage_adjusted_success_rate"] == 0.5
+    assert result["false_success_rate"] == 0.5
