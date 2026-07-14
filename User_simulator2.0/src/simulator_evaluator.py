@@ -12,7 +12,7 @@ from src.llm.llm_client import LLMClient
 from src.metrics_exporter import knowledge_boundary_stats
 from src.review_exporter import safe_filename
 from src.schemas import HistoricalDialogue, KnowledgeRoadmapArtifact, model_to_dict
-from src.transcript_exporter import build_transcript, read_simulation_logs
+from src.transcript_exporter import build_transcript, read_simulation_logs, split_logs_into_sessions
 from src.utils.json_utils import dumps_json
 from src.utils.jsonl import write_jsonl
 
@@ -121,13 +121,16 @@ class SimulatorEvaluator:
         dialogues_path: Path,
         dialogue_fields: Dict[str, Any] | None = None,
         use_judge: bool = False,
+        session_policy: str = "all",
     ) -> list[Path]:
+        if session_policy not in {"all", "latest", "first"}:
+            raise ValueError(f"Unsupported session_policy: {session_policy}")
         case_ids_list = [str(case_id) for case_id in case_ids]
         real_dialogues = load_dialogues(dialogues_path, dialogue_fields)
         reports = []
         for case_id in case_ids_list:
             real_transcripts = historical_dialogues_to_transcripts(select_real_dialogues(real_dialogues, case_id))
-            simulated_transcripts = load_simulated_sessions(self.output_dir, case_id)
+            simulated_transcripts = load_simulated_sessions(self.output_dir, case_id, session_policy=session_policy)
             if not real_transcripts:
                 raise ValueError(f"No real dialogues found for case_id: {case_id}")
             if not simulated_transcripts:
@@ -290,26 +293,21 @@ def historical_dialogues_to_transcripts(dialogues: list[HistoricalDialogue]) -> 
     return transcripts
 
 
-def load_simulated_sessions(output_dir: Path, case_id: str) -> list[Dict[str, Any]]:
+def load_simulated_sessions(output_dir: Path, case_id: str, session_policy: str = "all") -> list[Dict[str, Any]]:
     logs = [record for record in read_simulation_logs(output_dir / "simulation_logs.jsonl") if record["case_id"] == case_id]
     sessions = split_logs_into_sessions(logs)
-    return [build_transcript(case_id, session) for session in sessions if session]
+    selected_sessions = select_sessions_by_policy(sessions, session_policy)
+    return [build_transcript(case_id, session) for session in selected_sessions if session]
 
 
-def split_logs_into_sessions(logs: list[Dict[str, Any]]) -> list[list[Dict[str, Any]]]:
-    sessions: list[list[Dict[str, Any]]] = []
-    current: list[Dict[str, Any]] = []
-    previous_turn = 0
-    for record in sorted(logs, key=lambda item: str(item.get("timestamp") or "")):
-        turn = int((record.get("output") or {}).get("turn") or 0)
-        if current and (turn <= previous_turn or turn == 1):
-            sessions.append(current)
-            current = []
-        current.append(record)
-        previous_turn = turn
-    if current:
-        sessions.append(current)
-    return sessions
+def select_sessions_by_policy(sessions: list[list[Dict[str, Any]]], session_policy: str) -> list[list[Dict[str, Any]]]:
+    if session_policy == "all":
+        return sessions
+    if session_policy == "latest":
+        return sessions[-1:] if sessions else []
+    if session_policy == "first":
+        return sessions[:1]
+    raise ValueError(f"Unsupported session_policy: {session_policy}")
 
 
 def extract_features(transcript: Dict[str, Any]) -> Dict[str, Any]:

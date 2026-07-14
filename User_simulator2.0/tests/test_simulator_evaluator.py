@@ -7,11 +7,13 @@ from src.simulator_evaluator import (
     behavioral_realism,
     collect_real_case_ids,
     extract_features,
+    load_simulated_sessions,
     opening_similarity_alignment,
     select_real_dialogues,
     split_logs_into_sessions,
     trajectory_state_metrics,
 )
+from src.utils.jsonl import append_jsonl
 from tests.test_evaluator_metrics import build_test_artifact
 
 
@@ -62,6 +64,39 @@ def test_split_logs_into_sessions_uses_turn_restart():
     sessions = split_logs_into_sessions(logs)
 
     assert [len(session) for session in sessions] == [2, 2]
+
+
+def test_load_simulated_sessions_can_select_latest_session(tmp_path: Path):
+    output_dir = tmp_path / "outputs"
+    for timestamp, turn, reply in [
+        ("2026-01-01T00:00:01Z", 1, "第一次开场"),
+        ("2026-01-01T00:00:02Z", 2, "第一次结束"),
+        ("2026-01-01T00:10:01Z", 1, "第二次开场"),
+        ("2026-01-01T00:10:02Z", 2, "第二次结束"),
+    ]:
+        append_jsonl(
+            output_dir / "simulation_logs.jsonl",
+            {
+                "timestamp": timestamp,
+                "case_id": "KT001",
+                "module": "Simulator.step",
+                "input": {"history_before_reply": [{"role": "user", "content": reply}]},
+                "output": {
+                    "turn": turn,
+                    "user_reply": reply,
+                    "state": {"solution_status": "", "stop_reason": ""},
+                },
+            },
+        )
+
+    all_sessions = load_simulated_sessions(output_dir, "KT001", session_policy="all")
+    latest_sessions = load_simulated_sessions(output_dir, "KT001", session_policy="latest")
+    first_sessions = load_simulated_sessions(output_dir, "KT001", session_policy="first")
+
+    assert len(all_sessions) == 2
+    assert len(latest_sessions) == 1
+    assert "第二次" in latest_sessions[0]["messages"][0]["content"]
+    assert "第一次" in first_sessions[0]["messages"][0]["content"]
 
 
 def test_behavioral_realism_returns_bounded_score():

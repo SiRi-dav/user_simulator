@@ -161,6 +161,12 @@ def build_parser() -> argparse.ArgumentParser:
     simulator_eval.add_argument("--case_id")
     simulator_eval.add_argument("--dialogues", help="Historical dialogue JSON/JSONL path. Defaults to config paths.dialogues.")
     simulator_eval.add_argument("--judge", action="store_true", help="Use LLM judge for semantic realism, goal alignment, and over-cooperation.")
+    simulator_eval.add_argument(
+        "--session_policy",
+        choices=("all", "latest", "first"),
+        default="all",
+        help="Which simulated session(s) to evaluate per case: all, latest, or first.",
+    )
 
     select_real = subparsers.add_parser("select-real-cases", help="Select case ids that have real historical dialogues.")
     select_real.add_argument("--config", default="config.yaml")
@@ -591,7 +597,13 @@ def run_evaluate_simulator(
     knowledge_artifacts = load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl")
     llm_client = OpenAICompatibleClient.from_config(config) if args.judge else None
     evaluator = SimulatorEvaluator(output_dir, knowledge_artifacts, llm_client=llm_client)
-    paths = evaluator.evaluate(case_ids, dialogues_path, config.get("dialogue_fields"), use_judge=args.judge)
+    paths = evaluator.evaluate(
+        case_ids,
+        dialogues_path,
+        config.get("dialogue_fields"),
+        use_judge=args.judge,
+        session_policy=args.session_policy,
+    )
     print(f"Exported simulator evaluation to: {output_dir / 'simulator_eval'}")
     for path in paths:
         print(path)
