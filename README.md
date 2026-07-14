@@ -105,3 +105,18 @@ python3 -m src.pipelines.run_roadmap_api_simulation \
 ```
 
 The compatible log uses `module = "Simulator.step"` and `simulator_variant = "v1_enterprise_user_simulator"`, so the current evaluator can read it as long as the output directory also contains the same `knowledge_roadmaps.jsonl`.
+
+Evaluate the V1 output with the copied current evaluator:
+
+```bash
+cd User_simulator2.0
+
+python3 scripts/evaluate_current_simulator.py \
+  --output-dir ../outputs_v1 \
+  --dialogues ../data/processed/dialogues.normalized.jsonl \
+  --case-ids-file ../outputs/real_dialogue_case_ids.txt \
+  --session-policy latest \
+  --judge
+```
+
+Without `--judge`, the evaluator runs diagnostic rule metrics only. With `--judge`, it uses the current LLM-judge-primary scoring system.
