@@ -85,11 +85,11 @@ python3 -m src.pipelines.run_roadmap_api_simulation \
   --output outputs_v1/v1_roadmap_api_simulation.jsonl \
   --simulation-log-output outputs_v1/simulation_logs.jsonl \
   --case_ids_file outputs/real_dialogue_case_ids.txt \
-  --assistant-config User_simulator2.0/config.yaml \
+  --assistant-config assistant_config.yaml \
   --max-turns 15
 ```
 
-Use the same assistant API settings as the newer simulator config. `--assistant-config` reads the `assistant:` section, including `base_url`, `policy_base_url`, `response_base_url`, and custom endpoint paths. Command-line API flags are still available as temporary overrides.
+Use the same assistant API settings as the newer simulator config. `assistant_config.yaml` is a local copy of the newer simulator's `assistant:` section, so the V1 runner does not need to read files from the newer simulator directory. Command-line API flags are still available as temporary overrides.
 
 Optional LLM rewriting for V1 user utterances:
 
@@ -99,7 +99,7 @@ python3 -m src.pipelines.run_roadmap_api_simulation \
   --output outputs_v1/v1_roadmap_api_simulation.jsonl \
   --simulation-log-output outputs_v1/simulation_logs.jsonl \
   --case_ids_file outputs/real_dialogue_case_ids.txt \
-  --assistant-config User_simulator2.0/config.yaml \
+  --assistant-config assistant_config.yaml \
   --llm-provider openai-compatible \
   --llm-base-url https://your-llm-host \
   --llm-model your-model-name \
