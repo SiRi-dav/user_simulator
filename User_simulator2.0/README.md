@@ -205,6 +205,8 @@ For larger batches, run case-level analysis concurrently if the LLM service can 
 python main.py analyze-cases --case_ids_file outputs/real_dialogue_case_ids_500.txt --workers 8
 ```
 
+`--concurrency 8` is an alias for `--workers 8`. `analyze-cases` resumes by default: a case is skipped only when `knowledge_roadmaps.jsonl`, `blind_user_runtime_views.jsonl`, and `case_analysis_debug.jsonl` all contain that case. Add `--rerun_completed` only when you want to force regeneration.
+
 Analyze a different sequential batch:
 
 ```bash

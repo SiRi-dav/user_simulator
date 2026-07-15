@@ -1390,7 +1390,9 @@ python3 main.py analyze-cases \
   --workers 4
 ```
 
-如果中断，重复执行同一条命令即可；已经完成分析的 case 会被跳过。强制重跑分析时加：
+`--concurrency 4` 和 `--workers 4` 等价。`analyze-cases` 默认断点续跑：只有当同一个 case 已经同时写入 `knowledge_roadmaps.jsonl`、`blind_user_runtime_views.jsonl`、`case_analysis_debug.jsonl` 时才会跳过。
+
+如果中断，重复执行同一条命令即可；已经完整完成分析的 case 会被跳过。强制重跑分析时加：
 
 ```bash
 python3 main.py analyze-cases \

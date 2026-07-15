@@ -121,7 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--case_ids_file", help="Plain text file with one case_id per line.")
     analyze.add_argument("--random", action="store_true", help="Randomly sample --limit cases instead of using offset.")
     analyze.add_argument("--seed", type=int, help="Random seed for --random case sampling.")
-    analyze.add_argument("--workers", type=int, default=1, help="Analyze cases concurrently. Use 4-8 to speed up large batches if the LLM service can handle it.")
+    analyze.add_argument(
+        "--workers",
+        "--concurrency",
+        dest="workers",
+        type=int,
+        default=1,
+        help="Analyze cases concurrently. Use 4-8 to speed up large batches if the LLM service can handle it.",
+    )
     analyze.add_argument("--rerun_completed", action="store_true", help="Do not skip cases that already have final analysis artifacts.")
 
     mine = subparsers.add_parser("mine-behavior", help="Mine employee personas and behavior taxonomy from historical dialogues.")
@@ -246,6 +253,11 @@ def run_analyze_cases(
     knowledge_path = output_dir / "knowledge_roadmaps.jsonl"
     debug_path = output_dir / "case_analysis_debug.jsonl"
     completed_analysis = load_completed_analysis_case_ids(output_dir)
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    print(
+        f"Resume check: found {len(completed_analysis)} completed analysis case(s); "
+        f"workers={workers}; rerun_completed={bool(args.rerun_completed)}"
+    )
     pending_cases: list[Case] = []
     skipped_cases = 0
     for index, target_case in enumerate(selected_cases, 1):
@@ -263,7 +275,6 @@ def run_analyze_cases(
         return
     failed_cases = 0
     completed_now = 0
-    workers = max(1, int(getattr(args, "workers", 1) or 1))
     total_cases = len(pending_cases)
     if workers == 1:
         llm_client = OpenAICompatibleClient.from_config(config)
@@ -855,10 +866,11 @@ def load_case_analysis_debug_artifacts(path: Path) -> dict[str, CaseAnalysisDebu
 
 
 def load_completed_analysis_case_ids(output_dir: Path) -> set[str]:
-    """Cases usable by simulation: both roadmap and blind runtime view exist."""
+    """Cases with a complete analysis artifact set for resume/skip."""
     knowledge_ids = set(load_knowledge_roadmaps(output_dir / "knowledge_roadmaps.jsonl"))
     blind_runtime_ids = set(load_blind_user_runtime_views(output_dir / "blind_user_runtime_views.jsonl"))
-    return knowledge_ids & blind_runtime_ids
+    debug_ids = set(load_case_analysis_debug_artifacts(output_dir / "case_analysis_debug.jsonl"))
+    return knowledge_ids & blind_runtime_ids & debug_ids
 
 
 def persist_case_analysis_artifacts(

@@ -202,6 +202,35 @@ def test_persist_case_analysis_artifacts_marks_case_completed(tmp_path):
     assert load_completed_analysis_case_ids(tmp_path) == {"CASE_001"}
 
 
+def test_completed_analysis_requires_runtime_roadmap_and_debug(tmp_path):
+    llm = MockLLMClient()
+    target = Case(case_id="CASE_001", title="Outlook 打开后闪退", phenomenon="打开后退出", solution="结束残留进程")
+    roadmap = RoadmapBuilder(llm).build_roadmap(target, [], [])
+    blind_view = build_blind_user_view(roadmap)
+    knowledge_artifact = KnowledgeRoadmapArtifact(
+        case_id=target.case_id,
+        title=target.title,
+        roadmap=build_runtime_roadmap(roadmap),
+    )
+    debug_artifact = CaseAnalysisDebugArtifact(
+        case_id=target.case_id,
+        target_case=target,
+        retrieval_queries=[],
+        related_cases=[],
+        verified_points=[],
+        dropped_points=[],
+        warnings=[],
+        relations=[],
+        roadmap=roadmap,
+    )
+
+    persist_case_analysis_artifacts(tmp_path, blind_view, knowledge_artifact, debug_artifact)
+    assert load_completed_analysis_case_ids(tmp_path) == {"CASE_001"}
+
+    (tmp_path / "case_analysis_debug.jsonl").write_text("", encoding="utf-8")
+    assert load_completed_analysis_case_ids(tmp_path) == set()
+
+
 def test_runtime_loads_manual_seed_behavior_assets_when_outputs_missing(tmp_path):
     output_dir = tmp_path / "outputs"
     output_dir.mkdir()
