@@ -1,12 +1,14 @@
 # User Simulator 2.0 运行顺序与命令手册
 
-这份文档只保留交接和复现实验最需要的内容：先跑什么、再跑什么、每一步会生成什么文件。默认所有命令都在 `User_simulator2.0` 目录下执行。
+这份文档只保留交接和复现实验最需要的内容：先跑什么、再跑什么、每一步会生成什么文件。默认所有命令都在 `xirui_up1` 目录下执行。
 
 ```bash
-cd <repo_root>/User_simulator2.0
+cd xirui_up1
 ```
 
 不要在命令里写某台机器的绝对路径。真实数据路径、输出目录、LLM API 都放到 `config.yaml` 或单独复制出的实验配置文件里。
+
+公司 Windows 电脑上统一使用 `python`，不要使用带版本后缀的 Python 命令。旧版模拟器在 `xirui_test` 目录下运行，本文第 9 节单独说明。
 
 ## 0. 主线流程
 
@@ -56,7 +58,7 @@ paths:
 如果要把新一轮实验放进新目录，例如 `output714`，推荐复制一个配置：
 
 ```bash
-cp config.yaml config714.yaml
+copy config.yaml config714.yaml
 ```
 
 然后把 `config714.yaml` 里的 `paths.output_dir` 改成：
@@ -79,14 +81,14 @@ paths:
 命令：
 
 ```bash
-python3 main.py --config config714.yaml mine-behavior \
+python main.py --config config714.yaml mine-behavior \
   --max_dialogues 50
 ```
 
 如果想直接指定真实对话文件：
 
 ```bash
-python3 main.py --config config714.yaml mine-behavior \
+python main.py --config config714.yaml mine-behavior \
   --dialogues <historical_dialogue_path> \
   --max_dialogues 50
 ```
@@ -111,7 +113,7 @@ output714/user_behavior_taxonomy.jsonl
 命令：
 
 ```bash
-python3 main.py --config config714.yaml select-real-cases \
+python main.py --config config714.yaml select-real-cases \
   --limit 500 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
@@ -120,7 +122,7 @@ python3 main.py --config config714.yaml select-real-cases \
 如果只想先跑 20 个：
 
 ```bash
-python3 main.py --config config714.yaml select-real-cases \
+python main.py --config config714.yaml select-real-cases \
   --limit 20 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
@@ -145,7 +147,7 @@ output714/real_dialogue_case_ids.txt
 推荐命令：
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4
 ```
@@ -153,7 +155,7 @@ python3 main.py --config config714.yaml analyze-cases \
 `--concurrency 4` 和 `--workers 4` 等价：
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --concurrency 4
 ```
@@ -185,7 +187,7 @@ output714/case_analysis_errors.jsonl
 强制重跑：
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4 \
   --rerun_completed
@@ -198,7 +200,7 @@ python3 main.py --config config714.yaml analyze-cases \
 推荐命令：
 
 ```bash
-python3 main.py --config config714.yaml simulate-batch \
+python main.py --config config714.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
@@ -220,7 +222,7 @@ output714/simulate_batch_status.jsonl
 强制重跑已经完成的模拟：
 
 ```bash
-python3 main.py --config config714.yaml simulate-batch \
+python main.py --config config714.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15 \
@@ -234,7 +236,7 @@ python3 main.py --config config714.yaml simulate-batch \
 推荐命令：
 
 ```bash
-python3 scripts/evaluate_llm_primary_simulator.py \
+python scripts/evaluate_llm_primary_simulator.py \
   --config config714.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
@@ -244,7 +246,7 @@ python3 scripts/evaluate_llm_primary_simulator.py \
 如果不想依赖 `config714.yaml` 里的真实对话路径，也可以显式传入：
 
 ```bash
-python3 scripts/evaluate_llm_primary_simulator.py \
+python scripts/evaluate_llm_primary_simulator.py \
   --config config714.yaml \
   --output-dir output714 \
   --dialogues <historical_dialogue_path> \
@@ -286,7 +288,7 @@ output714/simulator_eval_llm_primary/<case_id>.md
 ### 7.1 整理模拟对话记录
 
 ```bash
-python3 scripts/export_combined_transcripts.py \
+python scripts/export_combined_transcripts.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
@@ -301,7 +303,7 @@ output714/transcripts/all_simulation_transcripts.json
 ### 7.2 整理路书
 
 ```bash
-python3 scripts/export_combined_roadmaps.py \
+python scripts/export_combined_roadmaps.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
@@ -316,7 +318,7 @@ output714/review/all_knowledge_roadmaps.json
 ### 7.3 整理 LLM-primary 评测结果
 
 ```bash
-python3 scripts/export_combined_llm_primary_eval.py \
+python scripts/export_combined_llm_primary_eval.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
@@ -333,7 +335,7 @@ output714/simulator_eval_llm_primary/all_llm_primary_eval.json
 如果你跑的是旧的 `main.py evaluate-simulator`，整理命令是：
 
 ```bash
-python3 scripts/export_combined_eval.py \
+python scripts/export_combined_eval.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
@@ -350,36 +352,36 @@ output714/simulator_eval/all_simulator_eval.json
 下面是一套从头到尾的主线命令。正式实验时只需要替换配置文件和输出目录。
 
 ```bash
-cd <repo_root>/User_simulator2.0
+cd xirui_up1
 ```
 
 ```bash
-python3 main.py --config config714.yaml mine-behavior \
+python main.py --config config714.yaml mine-behavior \
   --max_dialogues 50
 ```
 
 ```bash
-python3 main.py --config config714.yaml select-real-cases \
+python main.py --config config714.yaml select-real-cases \
   --limit 500 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
 ```
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4
 ```
 
 ```bash
-python3 main.py --config config714.yaml simulate-batch \
+python main.py --config config714.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
 ```
 
 ```bash
-python3 scripts/evaluate_llm_primary_simulator.py \
+python scripts/evaluate_llm_primary_simulator.py \
   --config config714.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
@@ -387,67 +389,135 @@ python3 scripts/evaluate_llm_primary_simulator.py \
 ```
 
 ```bash
-python3 scripts/export_combined_transcripts.py \
+python scripts/export_combined_transcripts.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
 
 ```bash
-python3 scripts/export_combined_roadmaps.py \
+python scripts/export_combined_roadmaps.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
 
 ```bash
-python3 scripts/export_combined_llm_primary_eval.py \
+python scripts/export_combined_llm_primary_eval.py \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt
 ```
 
-## 9. 辅助功能
+## 9. 旧版模拟器怎么跑
 
-### 9.1 只分析指定 case
+旧版模拟器在 `xirui_test` 目录下运行：
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+cd xirui_test
+```
+
+旧版通常复用新版已经生成好的路书和 case id。建议把同一批评测 case 保存在旧版输出目录里，例如：
+
+```text
+outputs_v1/real_dialogue_case_ids.txt
+outputs_v1/knowledge_roadmaps.jsonl
+```
+
+旧版模拟命令模板：
+
+```bash
+python -m src.pipelines.run_roadmap_api_simulation \
+  --roadmaps outputs_v1/knowledge_roadmaps.jsonl \
+  --output outputs_v1/roadmap_api_simulation.jsonl \
+  --simulation-log-output outputs_v1/simulation_logs.jsonl \
+  --case_ids_file outputs_v1/real_dialogue_case_ids.txt \
+  --assistant-config assistant_config.yaml \
+  --max-turns 15
+```
+
+如果只想先跑 20 条：
+
+```bash
+python -m src.pipelines.run_roadmap_api_simulation \
+  --roadmaps outputs_v1/knowledge_roadmaps.jsonl \
+  --output outputs_v1/roadmap_api_simulation.jsonl \
+  --simulation-log-output outputs_v1/simulation_logs.jsonl \
+  --case_ids_file outputs_v1/real_dialogue_case_ids.txt \
+  --assistant-config assistant_config.yaml \
+  --max-turns 15 \
+  --limit 20
+```
+
+旧版评测使用同一套 LLM-primary 评测逻辑，只是被评测对象换成旧版模拟器产出的 `outputs_v1/simulation_logs.jsonl`：
+
+```bash
+python scripts/evaluate_llm_primary_simulator.py \
+  --config config.yaml \
+  --llm-config judge_config.yaml \
+  --output-dir outputs_v1 \
+  --dialogues <historical_dialogue_path> \
+  --case-ids-file outputs_v1/real_dialogue_case_ids.txt \
+  --session-policy latest
+```
+
+整理旧版评测结果：
+
+```bash
+python scripts/export_combined_llm_primary_eval.py \
+  --output-dir outputs_v1 \
+  --case-ids-file outputs_v1/real_dialogue_case_ids.txt
+```
+
+对比新版和旧版时，关键是两边使用同一批：
+
+```text
+real_dialogue_case_ids.txt
+```
+
+这样评测差异才主要来自 user simulator 版本差异，而不是 case 集合差异。
+
+## 10. 辅助功能
+
+### 10.1 只分析指定 case
+
+```bash
+python main.py --config config714.yaml analyze-cases \
   --case_ids KT001 KT002 \
   --workers 2
 ```
 
-### 9.2 按 offset 分批分析
+### 10.2 按 offset 分批分析
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --limit 20 \
   --offset 40 \
   --workers 4
 ```
 
-### 9.3 随机抽样 case
+### 10.3 随机抽样 case
 
 ```bash
-python3 main.py --config config714.yaml analyze-cases \
+python main.py --config config714.yaml analyze-cases \
   --limit 20 \
   --random \
   --seed 42 \
   --workers 4
 ```
 
-### 9.4 单 case 模拟
+### 10.4 单 case 模拟
 
 ```bash
-python3 main.py --config config714.yaml simulate \
+python main.py --config config714.yaml simulate \
   --case_id KT001 \
   --assistant_mode api \
   --max_turns 15
 ```
 
-### 9.5 旧版评测命令
+### 10.5 新版旧评测器命令
 
-旧版评测仍然保留，但现在正式分析更推荐 LLM-primary 评测。
+新版目录里旧的 `evaluate-simulator` 评测器仍然保留，但现在正式分析更推荐 LLM-primary 评测。
 
 ```bash
-python3 main.py --config config714.yaml evaluate-simulator \
+python main.py --config config714.yaml evaluate-simulator \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --session_policy latest \
   --judge
@@ -459,9 +529,9 @@ python3 main.py --config config714.yaml evaluate-simulator \
 output714/simulator_eval/
 ```
 
-## 10. 常见问题
+## 11. 常见问题
 
-### 10.1 为什么模拟被跳过？
+### 11.1 为什么模拟被跳过？
 
 `simulate-batch` 会读取：
 
@@ -475,7 +545,7 @@ output714/simulate_batch_status.jsonl
 --rerun_completed
 ```
 
-### 10.2 为什么分析 case 被跳过？
+### 11.2 为什么分析 case 被跳过？
 
 `analyze-cases` 默认断点续跑。只有三类产物都存在才跳过：
 
@@ -491,7 +561,7 @@ case_analysis_debug.jsonl
 --rerun_completed
 ```
 
-### 10.3 为什么评测找不到真实对话？
+### 11.3 为什么评测找不到真实对话？
 
 检查 `config714.yaml`：
 
@@ -506,7 +576,7 @@ paths:
 --dialogues <historical_dialogue_path>
 ```
 
-### 10.4 为什么评测找不到模拟对话？
+### 11.4 为什么评测找不到模拟对话？
 
 检查：
 
@@ -527,7 +597,7 @@ knowledge_roadmaps.jsonl
 --output-dir output714
 ```
 
-### 10.5 `--assistant_mode api` 是否必须？
+### 11.5 `--assistant_mode api` 是否必须？
 
 批量模拟正式评测时建议必须加：
 
@@ -537,7 +607,7 @@ knowledge_roadmaps.jsonl
 
 这样才是调用真实 assistant。手动模式更适合调试单个 case。
 
-### 10.6 `--workers` 开多少合适？
+### 11.6 `--workers` 开多少合适？
 
 一般先用：
 
@@ -557,7 +627,7 @@ knowledge_roadmaps.jsonl
 --workers 2
 ```
 
-## 11. 主线产物对照表
+## 12. 主线产物对照表
 
 | 步骤 | 命令 | 关键输出 |
 |---|---|---|
