@@ -1,0 +1,14 @@
+llm:
+  provider: "openai-compatible"
+  base_url: "http://10.67.43.7:12345/v1"
+  endpoint: ""
+  api_key: "sk-1234"
+  model: "qwen3"
+  temperature: 0.2
+  max_tokens: 4096
+  timeout: 300
+  top_p: 0.5
+  presence_penalty: 1.5
+  top_k: 1
+  enable_thinking: false
+  response_format_json: false
