@@ -93,7 +93,12 @@ def discover_case_ids_from_markdown(eval_dir: Path, selected_case_ids: list[str]
 
 def resolve_path(root: Path, value: str) -> Path:
     path = Path(value).expanduser()
-    return path if path.is_absolute() else root / path
+    if path.is_absolute():
+        return path
+    cwd_path = (Path.cwd() / path).resolve()
+    if cwd_path.exists():
+        return cwd_path
+    return (root / path).resolve()
 
 
 def collect_case_ids(case_ids: list[str], case_ids_file: str | None) -> list[str]:
@@ -101,7 +106,8 @@ def collect_case_ids(case_ids: list[str], case_ids_file: str | None) -> list[str
     if case_ids_file:
         path = Path(case_ids_file).expanduser()
         if not path.is_absolute():
-            path = ROOT / path
+            cwd_path = (Path.cwd() / path).resolve()
+            path = cwd_path if cwd_path.exists() else (ROOT / path).resolve()
         for line in path.read_text(encoding="utf-8").splitlines():
             text = line.strip()
             if not text or text.startswith("#"):
