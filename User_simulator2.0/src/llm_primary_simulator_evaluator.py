@@ -305,19 +305,19 @@ def build_error_report(
             "type": error_type,
             "message": error_message,
         },
-        "overall_score": 0.0,
+        "overall_score": None,
         "scores": {
-            "conditional_user_behavior": 0.0,
-            "goal_alignment": 0.0,
-            "anti_overcooperation": 0.0,
-            "realsim_behavior": 0.0,
-            "user_only_discriminability": 0.0,
-            "leakage_aware_response": 0.0,
+            "conditional_user_behavior": None,
+            "goal_alignment": None,
+            "anti_overcooperation": None,
+            "realsim_behavior": None,
+            "user_only_discriminability": None,
+            "leakage_aware_response": None,
         },
-        "assistant_solution_hit": False,
-        "assistant_failure_confounded": True,
-        "user_wrongly_accepted_without_target_solution": False,
-        "user_leakage_detected": False,
+        "assistant_solution_hit": None,
+        "assistant_failure_confounded": None,
+        "user_wrongly_accepted_without_target_solution": None,
+        "user_leakage_detected": None,
         "subscores": {},
         "failure_modes": [f"Evaluation failed: {error_type}: {error_message}"],
         "distinguishing_cues": [],
@@ -578,28 +578,34 @@ def normalize_analysis(value: Dict[str, Any]) -> Dict[str, str]:
 
 
 def render_summary(reports: list[Dict[str, Any]]) -> str:
+    ok_count = sum(1 for report in reports if report.get("evaluation_status", "ok") == "ok")
+    failed_count = len(reports) - ok_count
     lines = [
         "# LLM-Primary Simulator Evaluation Summary",
         "",
+        f"- evaluated: {len(reports)}",
+        f"- succeeded: {ok_count}",
+        f"- failed: {failed_count}",
+        "",
         "| case_id | status | real | simulated | overall | conditional | goal | anti-overcoop | realsim | user-c2st | leakage-response | assistant-confounded |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "|---|---|---:|---:|---|---|---|---|---|---|---|---|",
     ]
     for report in reports:
         scores = report["scores"]
         lines.append(
-            "| {case_id} | {status} | {real} | {sim} | {overall:.3f} | {conditional:.3f} | {goal:.3f} | {anti:.3f} | {realsim:.3f} | {c2st:.3f} | {leakage:.3f} | {confounded} |".format(
+            "| {case_id} | {status} | {real} | {sim} | {overall} | {conditional} | {goal} | {anti} | {realsim} | {c2st} | {leakage} | {confounded} |".format(
                 case_id=report["case_id"],
                 status=report.get("evaluation_status", "ok"),
                 real=report["real_session_count"],
                 sim=report["simulated_session_count"],
-                overall=report["overall_score"],
-                conditional=scores["conditional_user_behavior"],
-                goal=scores["goal_alignment"],
-                anti=scores["anti_overcooperation"],
-                realsim=scores["realsim_behavior"],
-                c2st=scores["user_only_discriminability"],
-                leakage=scores["leakage_aware_response"],
-                confounded="yes" if report["assistant_failure_confounded"] else "no",
+                overall=format_score(report["overall_score"]),
+                conditional=format_score(scores["conditional_user_behavior"]),
+                goal=format_score(scores["goal_alignment"]),
+                anti=format_score(scores["anti_overcooperation"]),
+                realsim=format_score(scores["realsim_behavior"]),
+                c2st=format_score(scores["user_only_discriminability"]),
+                leakage=format_score(scores["leakage_aware_response"]),
+                confounded=format_bool(report["assistant_failure_confounded"]),
             )
         )
     lines.extend(
@@ -618,17 +624,18 @@ def render_case_report(report: Dict[str, Any]) -> str:
     lines = [
         f"# LLM-Primary Evaluation {report['case_id']}",
         "",
-        f"- overall_score: {report['overall_score']:.3f}",
-        f"- conditional_user_behavior: {scores['conditional_user_behavior']:.3f}",
-        f"- goal_alignment: {scores['goal_alignment']:.3f}",
-        f"- anti_overcooperation: {scores['anti_overcooperation']:.3f}",
-        f"- realsim_behavior: {scores['realsim_behavior']:.3f}",
-        f"- user_only_discriminability: {scores['user_only_discriminability']:.3f}",
-        f"- leakage_aware_response: {scores['leakage_aware_response']:.3f}",
-        f"- assistant_solution_hit: {report['assistant_solution_hit']}",
-        f"- assistant_failure_confounded: {report['assistant_failure_confounded']}",
-        f"- user_wrongly_accepted_without_target_solution: {report['user_wrongly_accepted_without_target_solution']}",
-        f"- user_leakage_detected: {report['user_leakage_detected']}",
+        f"- evaluation_status: {report.get('evaluation_status', 'ok')}",
+        f"- overall_score: {format_score(report['overall_score'])}",
+        f"- conditional_user_behavior: {format_score(scores['conditional_user_behavior'])}",
+        f"- goal_alignment: {format_score(scores['goal_alignment'])}",
+        f"- anti_overcooperation: {format_score(scores['anti_overcooperation'])}",
+        f"- realsim_behavior: {format_score(scores['realsim_behavior'])}",
+        f"- user_only_discriminability: {format_score(scores['user_only_discriminability'])}",
+        f"- leakage_aware_response: {format_score(scores['leakage_aware_response'])}",
+        f"- assistant_solution_hit: {format_bool(report['assistant_solution_hit'])}",
+        f"- assistant_failure_confounded: {format_bool(report['assistant_failure_confounded'])}",
+        f"- user_wrongly_accepted_without_target_solution: {format_bool(report['user_wrongly_accepted_without_target_solution'])}",
+        f"- user_leakage_detected: {format_bool(report['user_leakage_detected'])}",
         "",
         "## Failure Modes",
         "",
@@ -641,3 +648,18 @@ def render_case_report(report: Dict[str, Any]) -> str:
         lines.extend([f"### {key}", "", str(value), ""])
     lines.extend(["## Evidence", "", "```json", json.dumps(report.get("evidence") or {}, ensure_ascii=False, indent=2), "```"])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def format_score(value: Any) -> str:
+    if value is None:
+        return "ERR"
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return "ERR"
+
+
+def format_bool(value: Any) -> str:
+    if value is None:
+        return "ERR"
+    return "yes" if bool(value) else "no"

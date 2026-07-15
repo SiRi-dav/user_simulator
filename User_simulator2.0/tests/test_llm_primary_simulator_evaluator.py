@@ -1,7 +1,9 @@
 from src.llm_primary_simulator_evaluator import (
+    build_error_report,
     build_conditional_pairs,
     build_evidence,
     normalize_judge_payload,
+    render_summary,
     sample_user_messages,
 )
 
@@ -86,3 +88,15 @@ def test_normalize_judge_payload_calibrates_missing_overall_only():
 
     assert result["overall_score"] == 0.60
     assert explicit["overall_score"] == 0.52
+
+
+def test_failed_judge_report_renders_as_error_not_zero():
+    report = build_error_report("KT001", [{}], [{}], RuntimeError("connection reset"))
+
+    summary = render_summary([report])
+
+    assert report["overall_score"] is None
+    assert report["scores"]["goal_alignment"] is None
+    assert "failed: 1" in summary
+    assert "ERR" in summary
+    assert "0.000" not in summary
