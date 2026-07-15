@@ -6,7 +6,7 @@
 cd xirui_up1
 ```
 
-不要在命令里写某台机器的绝对路径。真实数据路径、输出目录、LLM API 都放到 `config.yaml` 或单独复制出的实验配置文件里。
+不要在命令里写某台机器的绝对路径。真实数据路径、输出目录、LLM API 都放到 `config.yaml` 里。
 
 公司 Windows 电脑上统一使用 `python`，不要使用带版本后缀的 Python 命令。旧版模拟器在 `xirui_test` 目录下运行，本文第 9 节单独说明。
 
@@ -55,24 +55,20 @@ paths:
 - `paths.output_dir`: 本次实验输出目录。
 - `llm`: 路书生成、行为判断、评测 judge 使用的 LLM 服务。
 
-如果要把新一轮实验放进新目录，例如 `output714`，推荐复制一个配置：
-
-```bash
-copy config.yaml config714.yaml
-```
-
-然后把 `config714.yaml` 里的 `paths.output_dir` 改成：
+如果要把新一轮实验放进新目录，例如 `output714`，直接修改 `config.yaml` 里的 `paths.output_dir`：
 
 ```yaml
 paths:
   output_dir: "output714"
 ```
 
-后续命令统一加：
+后续命令可以显式加：
 
 ```bash
---config config714.yaml
+--config config.yaml
 ```
+
+也可以不加，因为默认读取的就是 `config.yaml`。本文为了让命令更清楚，统一保留 `--config config.yaml`。
 
 ## 2. 第一步：分析历史对话数据
 
@@ -81,14 +77,14 @@ paths:
 命令：
 
 ```bash
-python main.py --config config714.yaml mine-behavior \
+python main.py --config config.yaml mine-behavior \
   --max_dialogues 50
 ```
 
 如果想直接指定真实对话文件：
 
 ```bash
-python main.py --config config714.yaml mine-behavior \
+python main.py --config config.yaml mine-behavior \
   --dialogues <historical_dialogue_path> \
   --max_dialogues 50
 ```
@@ -113,7 +109,7 @@ output714/user_behavior_taxonomy.jsonl
 命令：
 
 ```bash
-python main.py --config config714.yaml select-real-cases \
+python main.py --config config.yaml select-real-cases \
   --limit 500 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
@@ -122,7 +118,7 @@ python main.py --config config714.yaml select-real-cases \
 如果只想先跑 20 个：
 
 ```bash
-python main.py --config config714.yaml select-real-cases \
+python main.py --config config.yaml select-real-cases \
   --limit 20 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
@@ -147,7 +143,7 @@ output714/real_dialogue_case_ids.txt
 推荐命令：
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4
 ```
@@ -155,7 +151,7 @@ python main.py --config config714.yaml analyze-cases \
 `--concurrency 4` 和 `--workers 4` 等价：
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --concurrency 4
 ```
@@ -187,7 +183,7 @@ output714/case_analysis_errors.jsonl
 强制重跑：
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4 \
   --rerun_completed
@@ -200,7 +196,7 @@ python main.py --config config714.yaml analyze-cases \
 推荐命令：
 
 ```bash
-python main.py --config config714.yaml simulate-batch \
+python main.py --config config.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
@@ -222,7 +218,7 @@ output714/simulate_batch_status.jsonl
 强制重跑已经完成的模拟：
 
 ```bash
-python main.py --config config714.yaml simulate-batch \
+python main.py --config config.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15 \
@@ -237,17 +233,17 @@ python main.py --config config714.yaml simulate-batch \
 
 ```bash
 python scripts/evaluate_llm_primary_simulator.py \
-  --config config714.yaml \
+  --config config.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
   --session-policy latest
 ```
 
-如果不想依赖 `config714.yaml` 里的真实对话路径，也可以显式传入：
+如果不想依赖 `config.yaml` 里的真实对话路径，也可以显式传入：
 
 ```bash
 python scripts/evaluate_llm_primary_simulator.py \
-  --config config714.yaml \
+  --config config.yaml \
   --output-dir output714 \
   --dialogues <historical_dialogue_path> \
   --case-ids-file output714/real_dialogue_case_ids.txt \
@@ -356,25 +352,25 @@ cd xirui_up1
 ```
 
 ```bash
-python main.py --config config714.yaml mine-behavior \
+python main.py --config config.yaml mine-behavior \
   --max_dialogues 50
 ```
 
 ```bash
-python main.py --config config714.yaml select-real-cases \
+python main.py --config config.yaml select-real-cases \
   --limit 500 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
 ```
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4
 ```
 
 ```bash
-python main.py --config config714.yaml simulate-batch \
+python main.py --config config.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
@@ -382,7 +378,7 @@ python main.py --config config714.yaml simulate-batch \
 
 ```bash
 python scripts/evaluate_llm_primary_simulator.py \
-  --config config714.yaml \
+  --config config.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
   --session-policy latest
@@ -479,7 +475,7 @@ real_dialogue_case_ids.txt
 ### 10.1 只分析指定 case
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids KT001 KT002 \
   --workers 2
 ```
@@ -487,7 +483,7 @@ python main.py --config config714.yaml analyze-cases \
 ### 10.2 按 offset 分批分析
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --limit 20 \
   --offset 40 \
   --workers 4
@@ -496,7 +492,7 @@ python main.py --config config714.yaml analyze-cases \
 ### 10.3 随机抽样 case
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --limit 20 \
   --random \
   --seed 42 \
@@ -506,7 +502,7 @@ python main.py --config config714.yaml analyze-cases \
 ### 10.4 单 case 模拟
 
 ```bash
-python main.py --config config714.yaml simulate \
+python main.py --config config.yaml simulate \
   --case_id KT001 \
   --assistant_mode api \
   --max_turns 15
@@ -517,7 +513,7 @@ python main.py --config config714.yaml simulate \
 新版目录里旧的 `evaluate-simulator` 评测器仍然保留，但现在正式分析更推荐 LLM-primary 评测。
 
 ```bash
-python main.py --config config714.yaml evaluate-simulator \
+python main.py --config config.yaml evaluate-simulator \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --session_policy latest \
   --judge
@@ -563,7 +559,7 @@ case_analysis_debug.jsonl
 
 ### 11.3 为什么评测找不到真实对话？
 
-检查 `config714.yaml`：
+检查 `config.yaml`：
 
 ```yaml
 paths:

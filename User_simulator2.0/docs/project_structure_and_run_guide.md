@@ -87,18 +87,20 @@ paths:
   output_dir: "outputs"
 ```
 
-建议每次实验复制一个配置文件，例如：
-
-```bash
-copy config.yaml config714.yaml
-```
-
-然后把 `paths.output_dir` 改成独立目录，例如：
+每次实验直接修改 `config.yaml`。如果要把输出放到独立目录，例如 `output714`，把 `paths.output_dir` 改成：
 
 ```yaml
 paths:
   output_dir: "output714"
 ```
+
+命令里可以显式写：
+
+```bash
+--config config.yaml
+```
+
+也可以省略，因为默认读取的就是 `config.yaml`。
 
 ### `README.md`
 
@@ -275,7 +277,7 @@ real_assistant_client.py
 正式批量模拟时使用：
 
 ```bash
-python main.py --config config714.yaml simulate-batch \
+python main.py --config config.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
@@ -296,8 +298,8 @@ llm_client.py
 如果 judge 服务或路书生成服务报错，优先检查：
 
 ```text
-config.yaml / config714.yaml 里的 llm.base_url
-config.yaml / config714.yaml 里的 llm.model
+config.yaml 里的 llm.base_url
+config.yaml 里的 llm.model
 网络是否能访问公司 LLM 服务
 ```
 
@@ -339,7 +341,7 @@ overall
 
 ```bash
 python scripts/evaluate_llm_primary_simulator.py \
-  --config config714.yaml \
+  --config config.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
   --session-policy latest
@@ -479,24 +481,24 @@ cd xirui_up1
 主线命令顺序：
 
 ```bash
-python main.py --config config714.yaml mine-behavior --max_dialogues 50
+python main.py --config config.yaml mine-behavior --max_dialogues 50
 ```
 
 ```bash
-python main.py --config config714.yaml select-real-cases \
+python main.py --config config.yaml select-real-cases \
   --limit 500 \
   --offset 0 \
   --output output714/real_dialogue_case_ids.txt
 ```
 
 ```bash
-python main.py --config config714.yaml analyze-cases \
+python main.py --config config.yaml analyze-cases \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --workers 4
 ```
 
 ```bash
-python main.py --config config714.yaml simulate-batch \
+python main.py --config config.yaml simulate-batch \
   --case_ids_file output714/real_dialogue_case_ids.txt \
   --assistant_mode api \
   --max_turns 15
@@ -504,7 +506,7 @@ python main.py --config config714.yaml simulate-batch \
 
 ```bash
 python scripts/evaluate_llm_primary_simulator.py \
-  --config config714.yaml \
+  --config config.yaml \
   --output-dir output714 \
   --case-ids-file output714/real_dialogue_case_ids.txt \
   --session-policy latest
