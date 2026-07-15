@@ -69,3 +69,20 @@ def test_normalize_judge_payload_uses_new_default_overall_weighting():
 
     assert result["overall_score"] == 0.65
     assert result["assistant_failure_confounded"] is False
+
+
+def test_normalize_judge_payload_calibrates_missing_overall_only():
+    payload = {
+        "conditional_user_behavior_score": 0.62,
+        "goal_alignment_score": 0.62,
+        "anti_overcooperation_score": 0.62,
+        "realsim_behavior_score": 0.62,
+        "user_only_discriminability_score": 0.40,
+        "leakage_aware_response_score": 0.40,
+    }
+
+    result = normalize_judge_payload(payload)
+    explicit = normalize_judge_payload({**payload, "overall_score": 0.52})
+
+    assert result["overall_score"] == 0.60
+    assert explicit["overall_score"] == 0.52

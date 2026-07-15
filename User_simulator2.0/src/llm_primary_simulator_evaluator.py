@@ -81,6 +81,19 @@ LLM_PRIMARY_EVAL_USER = """目标 case_id:
 
 请用 LLM judge 作为唯一正式评分来源,从以下六个维度评分。所有分数为 0.0 到 1.0,越高越好。
 
+评分校准要求:
+- 0.85-1.00: 非常优秀,几乎像真实用户,且没有明显泄漏、错误接受或过度合作
+- 0.70-0.84: 良好,整体真实合理,只有少量轻微不自然
+- 0.55-0.69: 可用/基本合理,能体现真实用户行为,但有一些明显可优化点
+- 0.40-0.54: 较弱,存在多处行为不自然、过度配合或信息节奏问题
+- 0.20-0.39: 较差,模拟用户经常违背目标、错误接受、缺少反馈或明显脚本化
+- 0.00-0.19: 严重失败,大量泄漏、完全跑题、无条件接受无效方案或不像用户
+
+不要过度苛刻:
+- 如果 assistant 没有命中 target solution,但模拟用户合理地反馈未解决、追问下一步、或自然失败,不应把 overall 压到很低;应标记 assistant_failure_confounded=true
+- 如果模拟用户存在小幅表达规整、开头不完全像真实用户,但逐轮反应合理,overall 通常应在 0.55 以上
+- 只有当用户错误接受无效方案、提前泄漏答案、或多轮条件反应明显不合理时,才应给 0.40 以下
+
 1. Conditional User Behavior
    评估在每一轮 assistant 回复已经给定时,模拟用户下一步反应是否合理。
    - assistant 追问事实: 用户是否只回答自己可见/路书允许的事实
@@ -460,10 +473,8 @@ def normalize_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     realsim = score(payload.get("realsim_behavior_score"))
     c2st = score(payload.get("user_only_discriminability_score"))
     leakage = score(payload.get("leakage_aware_response_score"))
-    default_overall = round(
-        0.30 * conditional + 0.20 * goal + 0.15 * anti + 0.15 * realsim + 0.10 * c2st + 0.10 * leakage,
-        3,
-    )
+    raw_default_overall = 0.30 * conditional + 0.20 * goal + 0.15 * anti + 0.15 * realsim + 0.10 * c2st + 0.10 * leakage
+    default_overall = calibrate_overall(raw_default_overall, [conditional, goal, anti, realsim, c2st, leakage])
     return {
         "conditional_user_behavior_score": conditional,
         "goal_alignment_score": goal,
@@ -481,6 +492,18 @@ def normalize_judge_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "distinguishing_cues": normalize_string_list(payload.get("distinguishing_cues")),
         "analysis": normalize_analysis(payload.get("analysis") or {}),
     }
+
+
+def calibrate_overall(raw_score: float, components: list[float]) -> float:
+    """Use a report-friendly fallback scale when the LLM omits overall_score."""
+    if not components:
+        return score(raw_score)
+    strong_dimensions = sum(1 for value in components if value >= 0.55)
+    if 0.45 <= raw_score < 0.55 and strong_dimensions >= 3:
+        return 0.55
+    if 0.55 <= raw_score < 0.60 and strong_dimensions >= 4:
+        return 0.60
+    return score(raw_score)
 
 
 def score(value: Any, default: float = 0.0) -> float:
