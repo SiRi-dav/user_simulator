@@ -108,20 +108,23 @@ python3 -m src.pipelines.run_roadmap_api_simulation \
 
 The compatible log uses `module = "Simulator.step"` and `simulator_variant = "v1_enterprise_user_simulator"`, so the current evaluator can read it as long as the output directory also contains the same `knowledge_roadmaps.jsonl`.
 
-Evaluate the V1 output with the copied current evaluator:
+Evaluate the V1 output from the original simulator repo root:
 
 ```bash
-cd User_simulator2.0
-
-python3 scripts/evaluate_current_simulator.py \
-  --output-dir ../outputs_v1 \
-  --dialogues ../data/processed/dialogues.normalized.jsonl \
-  --case-ids-file ../outputs/real_dialogue_case_ids.txt \
-  --session-policy latest \
-  --judge
+python3 scripts/evaluate_llm_primary_simulator.py \
+  --config case_dialogue_mining/config.yaml \
+  --output-dir outputs_v1 \
+  --dialogues data/processed/dialogues.normalized.jsonl \
+  --case-ids-file outputs/real_dialogue_case_ids.txt \
+  --session-policy latest
 ```
 
-Without `--judge`, the evaluator runs diagnostic rule metrics only. With `--judge`, it uses the current LLM-judge-primary scoring system.
+The root script reuses the current LLM-primary evaluator implementation under
+`User_simulator2.0/`, but it reads the V1 files in the old repo layout. The
+config must provide the LLM judge settings under `llm`, or you can set
+`LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the environment.
+Use `--case-ids KT001 KT002` instead of `--case-ids-file ...` when you only
+want to evaluate a small subset.
 
 ## Run LLM-Primary User-Conditioned Evaluation
 
@@ -137,13 +140,16 @@ The evaluator focuses on the simulated user rather than the assistant:
 - solution-conditioned leakage-aware response, with assistant failure marked as confounding instead of directly penalizing the simulator
 
 ```bash
-cd User_simulator2.0
-
 python3 scripts/evaluate_llm_primary_simulator.py \
-  --config config.yaml \
+  --config case_dialogue_mining/config.yaml \
   --output-dir output714 \
+  --dialogues data/processed/dialogues.normalized.jsonl \
   --case-ids-file output714/real_dialogue_case_ids.txt \
   --session-policy latest
 ```
 
-If the config already contains `paths.output_dir` and `paths.dialogues`, `--output-dir` can be omitted. You can also pass `--dialogues <real_dialogue_file>` directly when evaluating an exported output folder.
+If the config already contains `paths.output_dir` and `paths.dialogues`,
+`--output-dir` and `--dialogues` can be omitted. You can also pass
+`--dialogues <real_dialogue_file>` directly when evaluating an exported output
+folder. The command is intentionally run from the repo root so the same entry
+point works for V1 outputs and newer exported outputs.
