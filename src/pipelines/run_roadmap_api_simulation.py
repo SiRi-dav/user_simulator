@@ -15,6 +15,23 @@ from src.simulator.runtime import EnterpriseUserSimulator
 from src.simulator.schemas import AgentStep, UserGoalSeed, to_dict
 
 
+ASSISTANT_CONFIG_KEYS = {
+    "base_url",
+    "policy_base_url",
+    "response_base_url",
+    "timeout",
+    "query_path",
+    "trigger_path",
+    "policy_path",
+    "response_path",
+    "default_cases",
+    "common_sense_cases",
+    "no_rag_cases",
+    "allow_missing_policy",
+    "missing_policy_value",
+}
+
+
 def run_one_with_assistant_api(
     seed: UserGoalSeed,
     assistant: AssistantApiClient,
@@ -213,6 +230,90 @@ def strip_compatible_logs(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return stripped
 
 
+def load_assistant_config(path: str | None) -> Dict[str, Any]:
+    if not path:
+        return {}
+    config = parse_simple_yaml(Path(path))
+    assistant = config.get("assistant") or config.get("assistant_api") or {}
+    if not isinstance(assistant, dict):
+        return {}
+    return {key: value for key, value in assistant.items() if key in ASSISTANT_CONFIG_KEYS}
+
+
+def parse_simple_yaml(path: Path) -> Dict[str, Any]:
+    """Parse the small YAML subset used by the simulator config files."""
+    root: Dict[str, Any] = {}
+    stack: List[tuple[int, Dict[str, Any]]] = [(-1, root)]
+    last_key_at_indent: Dict[int, str] = {}
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        line = raw_line.strip()
+
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+
+        if line.startswith("- "):
+            key = last_key_at_indent.get(indent - 2)
+            if key is None:
+                continue
+            parent_list = parent.setdefault(key, [])
+            if isinstance(parent_list, list):
+                parent_list.append(parse_yaml_scalar(line[2:].strip()))
+            continue
+
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        last_key_at_indent[indent] = key
+        if value == "":
+            child: Dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = parse_yaml_scalar(value)
+    return root
+
+
+def parse_yaml_scalar(value: str) -> Any:
+    value = value.strip()
+    if value.startswith('"') and value.endswith('"'):
+        return value[1:-1]
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+    if value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def assistant_config_with_cli_overrides(args: argparse.Namespace) -> Dict[str, Any]:
+    config = load_assistant_config(args.assistant_config)
+    cli_values = {
+        "base_url": args.assistant_base_url,
+        "policy_base_url": args.assistant_policy_base_url,
+        "response_base_url": args.assistant_response_base_url,
+        "query_path": args.assistant_query_path,
+        "trigger_path": args.assistant_trigger_path,
+        "policy_path": args.assistant_policy_path,
+        "response_path": args.assistant_response_path,
+        "timeout": args.assistant_timeout,
+    }
+    for key, value in cli_values.items():
+        if value is not None:
+            config[key] = value
+    return config
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run original v1 EnterpriseUserSimulator on current knowledge_roadmaps.jsonl against real assistant API."
@@ -226,10 +327,15 @@ def main() -> None:
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--max-turns", type=int, default=8)
     parser.add_argument("--persona", default="low_tech", choices=["low_tech", "cooperative", "impatient", "vague"])
-    parser.add_argument("--assistant-base-url", default="http://10.67.43.6:8338")
+    parser.add_argument("--assistant-config", help="New simulator config YAML; reads the assistant section.")
+    parser.add_argument("--assistant-base-url")
     parser.add_argument("--assistant-policy-base-url")
     parser.add_argument("--assistant-response-base-url")
-    parser.add_argument("--assistant-timeout", type=float, default=120)
+    parser.add_argument("--assistant-query-path")
+    parser.add_argument("--assistant-trigger-path")
+    parser.add_argument("--assistant-policy-path")
+    parser.add_argument("--assistant-response-path")
+    parser.add_argument("--assistant-timeout", type=float)
     parser.add_argument("--llm-provider", default="mock", choices=["mock", "openai-compatible"])
     parser.add_argument("--llm-base-url", default=None)
     parser.add_argument("--llm-api-key", default=None)
@@ -255,12 +361,8 @@ def main() -> None:
         timeout=args.llm_timeout,
         temperature=args.llm_temperature,
     )
-    assistant = AssistantApiClient(
-        base_url=args.assistant_base_url,
-        policy_base_url=args.assistant_policy_base_url,
-        response_base_url=args.assistant_response_base_url,
-        timeout=args.assistant_timeout,
-    )
+    assistant_config = assistant_config_with_cli_overrides(args)
+    assistant = AssistantApiClient(**assistant_config)
     persona = persona_from_name(args.persona)
     seeds = [seed_from_knowledge_roadmap(record, persona=persona) for record in roadmap_records]
     results = [run_one_with_assistant_api(seed, assistant, args.max_turns, llm=llm) for seed in seeds]

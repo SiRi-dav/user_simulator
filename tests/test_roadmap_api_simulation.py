@@ -1,4 +1,4 @@
-from src.pipelines.run_roadmap_api_simulation import run_one_with_assistant_api
+from src.pipelines.run_roadmap_api_simulation import load_assistant_config, run_one_with_assistant_api
 from src.simulator.assistant_api import AssistantApiClient
 from src.simulator.llm_client import MockLLMClient
 from src.simulator.roadmap_adapter import persona_from_name, seed_from_knowledge_roadmap
@@ -27,6 +27,36 @@ def test_v1_roadmap_api_simulation_writes_compatible_logs():
     assert log["case_id"] == "KT001"
     assert log["output"]["simulator_variant"] == "v1_enterprise_user_simulator"
     assert log["input"]["history_before_reply"][0]["role"] == "user"
+
+
+def test_load_assistant_config_reads_new_simulator_assistant_section(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                "  output_dir: output714",
+                "assistant:",
+                "  base_url: http://query-host",
+                "  policy_base_url: http://policy-host",
+                "  response_base_url: http://response-host",
+                "  query_path: /query2",
+                "  trigger_path: /trigger2",
+                "  policy_path: /policy2",
+                "  response_path: /response2",
+                "  timeout: 30",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_assistant_config(str(config_path))
+
+    assert config["base_url"] == "http://query-host"
+    assert config["policy_base_url"] == "http://policy-host"
+    assert config["response_base_url"] == "http://response-host"
+    assert config["response_path"] == "/response2"
+    assert config["timeout"] == 30
 
 
 def fake_post_json(url, payload, timeout):
