@@ -329,6 +329,24 @@ leakage-response
 overall
 ```
 
+`simulator_eval_llm_primary/summary.md` 是快速扫结果的主文件。字段含义如下：
+
+| 字段 | 含义 |
+|---|---|
+| `case_id` | 案例 ID。 |
+| `real` | 找到的真实对话 session 数，不是分数。 |
+| `simulated` | 找到的模拟对话 session 数，不是分数；`--session-policy latest` 会让每个 case 只取最后一次模拟进入评测。 |
+| `overall` | 综合分，满分 1，由 LLM judge 结合各子维度判断。 |
+| `conditional` | 条件行为真实度：用户是否根据 assistant 的追问、动作要求、失败方案做合理反应。 |
+| `goal` | 目标一致性：用户后续信息输出是否仍围绕原始任务目标。 |
+| `anti-overcoop` | 反过度合作：用户是否避免无条件接受、过早配合、替 assistant 补答案。 |
+| `realsim` | RealSim-style 用户行为真实度：只看用户侧表达和行为分布。 |
+| `user-c2st` | 用户侧可区分性：只看用户消息，分高表示真实用户和模拟用户更难区分。 |
+| `leakage-response` | 去泄漏成功 / 泄漏响应：看用户是否没有泄漏路书内部答案，并在 assistant 命中或未命中方案时作出合理接受/拒绝。 |
+| `assistant-confounded` | assistant 失败混杂标记。`yes` 表示 assistant 侧没有命中 target solution 或明显带偏，对 user simulator 不应强惩罚。 |
+
+每个 case 还会生成 `<case_id>.md`，里面保存 LLM judge 对各维度的文字解释、失败模式、可区分线索和泄漏判断，适合抽样复核。
+
 ### `src/tau2_evaluator.py`
 
 额外的 tau2-style 评测模块，用于对照实验。

@@ -274,6 +274,24 @@ output714/simulator_eval_llm_primary/<case_id>.md
 - `leakage-response`: 是否对疑似信息泄漏有合理惩罚和解释。
 - `overall`: 综合分，LLM judge 为主，规则和分布信号为辅助证据。
 
+`summary.md` 字段含义：
+
+| 字段 | 含义 | 说明 |
+|---|---|---|
+| `case_id` | 被评测的案例 ID | 用于对应真实对话、路书和模拟日志。 |
+| `real` | 找到的真实对话 session 数 | 不是分数。通常大于 0 才能做对照评测。 |
+| `simulated` | 找到的模拟对话 session 数 | 不是分数。使用 `--session-policy latest` 时，每个 case 通常只取最后 1 个模拟 session 进入评测。 |
+| `overall` | 综合评分 | 满分 1。由 LLM judge 给出，参考各子维度，不应只按 assistant 是否解决问题理解。 |
+| `conditional` | 条件行为真实度 | 看用户是否根据 assistant 当前回复做出合理反应，例如回答可回答事实、执行动作后反馈结果、无效方案后表达未解决。 |
+| `goal` | 任务目标一致性 | 看用户后续输出是否仍围绕初始问题和路书目标，不突然换目标、不主动补出无关答案。 |
+| `anti-overcoop` | 反过度合作 | 看用户是否避免无条件配合、过早接受、替 assistant 推理答案；分高表示更像真实用户，不是“越配合越好”。 |
+| `realsim` | RealSim-style 用户行为真实度 | 只评用户侧表达和行为分布，参考意图、反馈、情绪、领域知识、身份上下文、消息长度、语言属性、错误报告等。 |
+| `user-c2st` | 用户侧 C2ST / 可区分性 | 只看用户消息，不看 assistant 回复。分高表示真实用户和模拟用户更难区分。 |
+| `leakage-response` | 去泄漏成功 / 泄漏响应 | 看用户是否没有泄漏 solution、judge-only diagnostic、forbidden content；也看 assistant 命中 target solution 时是否自然接受，未命中时是否没有误接受。 |
+| `assistant-confounded` | assistant 失败混杂标记 | `yes` 表示 assistant 没有命中 target solution 或明显把对话带偏。此时不应把低成功率直接归因给 user simulator。 |
+
+每个 `<case_id>.md` 里会有更详细的 LLM judge 解释，包括各维度理由、可能的问题模式、真实/模拟用户可区分线索，以及是否检测到用户侧信息泄漏。
+
 注意：
 
 - `real` 和 `simulated` 列是找到的真实对话数量和模拟对话数量，不是分数。
