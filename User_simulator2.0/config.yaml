@@ -34,10 +34,10 @@ dialogue_fields:
   text: "text"
 
 retrieval:
-  candidate_top_n: 50
-  per_route_top_n: 12
+  candidate_top_n: 30
+  per_route_top_n: 8
   related_top_k: 5
-  rerank_top_n: 20
+  rerank_top_n: 12
   minimum_score: 0.35
   fallback_min_cases: 2
   bm25_weight: 0.6

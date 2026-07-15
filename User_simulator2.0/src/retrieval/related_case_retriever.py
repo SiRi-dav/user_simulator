@@ -17,19 +17,37 @@ class RelatedCasesOutput(BaseModel):
     related_cases: List[RelatedCaseSelection] = Field(default_factory=list)
 
 
+def truncate_text(value: str, max_chars: int) -> str:
+    text = (value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
+
+
+def compact_case_payload(case: Case, max_text_chars: int) -> dict[str, str]:
+    return {
+        "case_id": case.case_id,
+        "title": truncate_text(case.title, 120),
+        "phenomenon": truncate_text(case.phenomenon, max_text_chars),
+        "solution": truncate_text(case.solution, max_text_chars),
+    }
+
+
 class RelatedCaseRetriever:
     def __init__(
         self,
         llm_client: LLMClient,
         logger: OutputLogger | None = None,
         top_k: int = 5,
-        recall_top_n: int = 50,
-        per_route_top_n: int = 12,
-        rerank_top_n: int = 20,
+        recall_top_n: int = 30,
+        per_route_top_n: int = 8,
+        rerank_top_n: int = 12,
         minimum_score: float = 0.35,
         fallback_min_cases: int = 2,
         bm25_weight: float = 0.6,
         semantic_weight: float = 0.4,
+        target_text_chars: int = 900,
+        candidate_text_chars: int = 500,
     ):
         self.llm_client = llm_client
         self.logger = logger
@@ -38,6 +56,8 @@ class RelatedCaseRetriever:
         self.rerank_top_n = rerank_top_n
         self.minimum_score = minimum_score
         self.fallback_min_cases = min(fallback_min_cases, top_k)
+        self.target_text_chars = target_text_chars
+        self.candidate_text_chars = candidate_text_chars
         self.local_recall = LocalCandidateRecall(
             top_n=recall_top_n,
             per_route_top_n=per_route_top_n,
@@ -49,11 +69,11 @@ class RelatedCaseRetriever:
         recalled = self.local_recall.recall_scored(target_case, queries, all_cases)
         candidate_cases = [item.case for item in recalled]
         candidate_payload = [
-            {**model_to_dict(item.case), "retrieval_scores": item.score_payload()}
+            {**compact_case_payload(item.case, self.candidate_text_chars), "retrieval_scores": item.score_payload()}
             for item in recalled
         ]
         user_prompt = RELATED_CASE_USER.format(
-            target_case_json=dumps_json(model_to_dict(target_case)),
+            target_case_json=dumps_json(compact_case_payload(target_case, self.target_text_chars)),
             queries_json=dumps_json(model_to_dict(queries)),
             candidate_cases_json=dumps_json(candidate_payload),
             rerank_top_n=self.rerank_top_n,
