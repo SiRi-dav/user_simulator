@@ -70,10 +70,30 @@ def load_config(path: Path) -> Dict[str, Any]:
 
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if isinstance(data, dict):
-            return data
+            return normalize_config(data)
         return {}
     except ImportError:
-        return parse_simple_yaml(path)
+        return normalize_config(parse_simple_yaml(path))
+
+
+def normalize_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    if "llm" not in config and isinstance(config.get("local_ai"), dict):
+        local_ai = dict(config["local_ai"])
+        config["llm"] = {
+            "base_url": local_ai.get("base_url") or local_ai.get("endpoint"),
+            "endpoint": local_ai.get("endpoint"),
+            "api_key": local_ai.get("api_key"),
+            "model": local_ai.get("model"),
+            "temperature": local_ai.get("temperature"),
+            "max_tokens": local_ai.get("max_tokens"),
+            "timeout": local_ai.get("timeout"),
+            "top_p": local_ai.get("top_p"),
+            "presence_penalty": local_ai.get("presence_penalty"),
+            "top_k": local_ai.get("top_k"),
+            "enable_thinking": local_ai.get("enable_thinking"),
+            "response_format_json": local_ai.get("response_format_json"),
+        }
+    return config
 
 
 def collect_case_ids(args: argparse.Namespace) -> list[str]:

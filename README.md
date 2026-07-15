@@ -121,8 +121,9 @@ python3 scripts/evaluate_llm_primary_simulator.py \
 
 The root script reuses the current LLM-primary evaluator implementation under
 `User_simulator2.0/`, but it reads the V1 files in the old repo layout. The
-config must provide the LLM judge settings under `llm`, or you can set
-`LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the environment.
+config must provide the LLM judge settings under `llm`; the old
+`case_dialogue_mining/config.yaml` `local_ai` block is also accepted. You can
+also set `LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the environment.
 Use `--case-ids KT001 KT002` instead of `--case-ids-file ...` when you only
 want to evaluate a small subset.
 
