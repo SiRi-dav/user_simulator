@@ -201,13 +201,18 @@ class LLMPrimarySimulatorEvaluator:
         real_dialogues = load_dialogues(dialogues_path, dialogue_fields)
         reports: list[Dict[str, Any]] = []
         for case_id in [str(item) for item in case_ids]:
-            real_transcripts = historical_dialogues_to_transcripts(select_real_dialogues(real_dialogues, case_id))
-            simulated_transcripts = load_simulated_sessions(self.output_dir, case_id, session_policy=session_policy)
-            if not real_transcripts:
-                raise ValueError(f"No real dialogues found for case_id: {case_id}")
-            if not simulated_transcripts:
-                raise ValueError(f"No simulated sessions found for case_id: {case_id}")
-            reports.append(self.evaluate_case(case_id, real_transcripts, simulated_transcripts))
+            real_transcripts: list[Dict[str, Any]] = []
+            simulated_transcripts: list[Dict[str, Any]] = []
+            try:
+                real_transcripts = historical_dialogues_to_transcripts(select_real_dialogues(real_dialogues, case_id))
+                simulated_transcripts = load_simulated_sessions(self.output_dir, case_id, session_policy=session_policy)
+                if not real_transcripts:
+                    raise ValueError(f"No real dialogues found for case_id: {case_id}")
+                if not simulated_transcripts:
+                    raise ValueError(f"No simulated sessions found for case_id: {case_id}")
+                reports.append(self.evaluate_case(case_id, real_transcripts, simulated_transcripts))
+            except Exception as exc:
+                reports.append(build_error_report(case_id, real_transcripts, simulated_transcripts, exc))
         return self.write_outputs(reports)
 
     def evaluate_case(
@@ -280,6 +285,48 @@ class LLMPrimarySimulatorEvaluator:
             case_path = self.eval_dir / f"{safe_filename(report['case_id'])}.md"
             case_path.write_text(render_case_report(report), encoding="utf-8")
         return [jsonl_path, md_path]
+
+
+def build_error_report(
+    case_id: str,
+    real_transcripts: list[Dict[str, Any]],
+    simulated_transcripts: list[Dict[str, Any]],
+    exc: Exception,
+) -> Dict[str, Any]:
+    error_type = type(exc).__name__
+    error_message = str(exc)
+    return {
+        "case_id": case_id,
+        "real_session_count": len(real_transcripts),
+        "simulated_session_count": len(simulated_transcripts),
+        "evaluation_mode": "llm_primary_user_conditioned",
+        "evaluation_status": "failed",
+        "evaluation_error": {
+            "type": error_type,
+            "message": error_message,
+        },
+        "overall_score": 0.0,
+        "scores": {
+            "conditional_user_behavior": 0.0,
+            "goal_alignment": 0.0,
+            "anti_overcooperation": 0.0,
+            "realsim_behavior": 0.0,
+            "user_only_discriminability": 0.0,
+            "leakage_aware_response": 0.0,
+        },
+        "assistant_solution_hit": False,
+        "assistant_failure_confounded": True,
+        "user_wrongly_accepted_without_target_solution": False,
+        "user_leakage_detected": False,
+        "subscores": {},
+        "failure_modes": [f"Evaluation failed: {error_type}: {error_message}"],
+        "distinguishing_cues": [],
+        "analysis": {
+            "evaluation_error": error_message,
+        },
+        "evidence": {},
+        "llm_judge": {},
+    }
 
 
 def build_evidence(
@@ -534,14 +581,15 @@ def render_summary(reports: list[Dict[str, Any]]) -> str:
     lines = [
         "# LLM-Primary Simulator Evaluation Summary",
         "",
-        "| case_id | real | simulated | overall | conditional | goal | anti-overcoop | realsim | user-c2st | leakage-response | assistant-confounded |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| case_id | status | real | simulated | overall | conditional | goal | anti-overcoop | realsim | user-c2st | leakage-response | assistant-confounded |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for report in reports:
         scores = report["scores"]
         lines.append(
-            "| {case_id} | {real} | {sim} | {overall:.3f} | {conditional:.3f} | {goal:.3f} | {anti:.3f} | {realsim:.3f} | {c2st:.3f} | {leakage:.3f} | {confounded} |".format(
+            "| {case_id} | {status} | {real} | {sim} | {overall:.3f} | {conditional:.3f} | {goal:.3f} | {anti:.3f} | {realsim:.3f} | {c2st:.3f} | {leakage:.3f} | {confounded} |".format(
                 case_id=report["case_id"],
+                status=report.get("evaluation_status", "ok"),
                 real=report["real_session_count"],
                 sim=report["simulated_session_count"],
                 overall=report["overall_score"],

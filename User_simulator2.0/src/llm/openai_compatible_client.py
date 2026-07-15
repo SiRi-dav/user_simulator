@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Dict, Optional
 
 from src.llm.llm_client import LLMClient
@@ -91,7 +92,18 @@ class OpenAICompatibleClient(LLMClient):
         if extra_body:
             request_kwargs["extra_body"] = extra_body
 
-        completion = client.chat.completions.create(**request_kwargs)
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                completion = client.chat.completions.create(**request_kwargs)
+                break
+            except Exception as exc:  # pragma: no cover - depends on remote LLM service behavior.
+                last_error = exc
+                if attempt == 2:
+                    raise
+                time.sleep(2 * (attempt + 1))
+        else:  # pragma: no cover - defensive only.
+            raise RuntimeError(f"LLM request failed for schema {schema_name}") from last_error
         choices = completion.choices or []
         if not choices or choices[0].message is None:
             raise RuntimeError(f"LLM returned no choices for schema {schema_name}")
