@@ -302,7 +302,10 @@ def run_analyze_cases(
         print(f"Analyzing {total_cases} case(s) with workers={workers}.")
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(analyze_case_worker, target_case, cases, config, output_dir): (index, target_case)
+                executor.submit(analyze_case_worker, target_case, cases, config, output_dir, index, total_cases): (
+                    index,
+                    target_case,
+                )
                 for index, target_case in enumerate(pending_cases, 1)
             }
             completed = 0
@@ -342,7 +345,11 @@ def analyze_case_worker(
     cases: list[Case],
     config: Dict[str, Any],
     output_dir: Path,
+    index: int | None = None,
+    total_cases: int | None = None,
 ) -> tuple[BlindUserCaseView, KnowledgeRoadmapArtifact, CaseAnalysisDebugArtifact]:
+    if index is not None and total_cases is not None:
+        print(f"[START {index}/{total_cases}] Analyzing case {target_case.case_id}: {target_case.title}", flush=True)
     llm_client = OpenAICompatibleClient.from_config(config)
     logger = OutputLogger(output_dir)
     return build_case_analysis_artifacts(target_case, cases, llm_client, logger, config)
