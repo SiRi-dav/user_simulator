@@ -21,7 +21,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the LLM-primary evaluator from the original simulator repo root."
     )
-    parser.add_argument("--config", help="Optional config YAML. Reads llm and paths.dialogues/output_dir.")
+    parser.add_argument("--config", help="Optional config YAML. Reads paths/dialogue_fields and, if present, llm.")
+    parser.add_argument(
+        "--llm-config",
+        help="Optional config YAML used only for the LLM judge settings. Useful when reusing the newer simulator config.",
+    )
     parser.add_argument("--output-dir", help="Directory containing simulation_logs.jsonl and knowledge_roadmaps.jsonl.")
     parser.add_argument("--dialogues", help="Historical real dialogue JSON/JSONL path.")
     parser.add_argument("--case-id")
@@ -31,6 +35,12 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(resolve_path(args.config)) if args.config else {}
+    if args.llm_config:
+        llm_config = load_config(resolve_path(args.llm_config))
+        if isinstance(llm_config.get("llm"), dict):
+            config["llm"] = llm_config["llm"]
+        elif isinstance(llm_config.get("local_ai"), dict):
+            config["llm"] = normalize_config(llm_config).get("llm", {})
     output_dir = resolve_path(args.output_dir or nested_get(config, ["paths", "output_dir"]) or "outputs_v1")
     dialogues_path_value = args.dialogues or nested_get(config, ["paths", "dialogues"])
     if not dialogues_path_value:

@@ -113,6 +113,7 @@ Evaluate the V1 output from the original simulator repo root:
 ```bash
 python3 scripts/evaluate_llm_primary_simulator.py \
   --config case_dialogue_mining/config.yaml \
+  --llm-config ../User_simulator2.0/config.yaml \
   --output-dir outputs_v1 \
   --dialogues data/processed/dialogues.normalized.jsonl \
   --case-ids-file outputs/real_dialogue_case_ids.txt \
@@ -120,10 +121,10 @@ python3 scripts/evaluate_llm_primary_simulator.py \
 ```
 
 The root script reuses the current LLM-primary evaluator implementation under
-`User_simulator2.0/`, but it reads the V1 files in the old repo layout. The
-config must provide the LLM judge settings under `llm`; the old
-`case_dialogue_mining/config.yaml` `local_ai` block is also accepted. You can
-also set `LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the environment.
+`User_simulator2.0/`, but it reads the V1 files in the old repo layout.
+`--config` should point to the old data/path config. `--llm-config` can point
+to the newer simulator config so both versions use the same judge service. You
+can also set `LLM_BASE_URL`, `LLM_MODEL`, and optionally `LLM_API_KEY` in the environment.
 Use `--case-ids KT001 KT002` instead of `--case-ids-file ...` when you only
 want to evaluate a small subset.
 
